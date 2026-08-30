@@ -1,0 +1,6 @@
+{
+  "name": "NINETIES SHOTS",
+  "description": "Official website and editorial photography portfolio for NINETIES SHOTS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

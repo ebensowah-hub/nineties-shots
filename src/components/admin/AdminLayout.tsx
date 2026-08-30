@@ -50,7 +50,7 @@ import { AdminServices } from './AdminServices';
 import { AdminAnalytics } from './AdminAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { AdminAuditLog } from './AdminAuditLog';
-import { Loader2, RefreshCw, Eye } from 'lucide-react';
+import { Loader2, RefreshCw, Eye, Menu } from 'lucide-react';
 
 interface AdminLayoutProps {
   user: AdminUser;
@@ -62,6 +62,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // Core Data States
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -245,24 +246,33 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
     <div className="min-h-screen bg-black text-white flex flex-col md:flex-row antialiased selection:bg-white selection:text-black">
       {/* Admin Sidebar Navigation */}
       <AdminSidebar
-        user={user}
-        activeTab={activeTab}
+        adminUser={user}
+        currentTab={activeTab}
         onSelectTab={tab => {
           setActiveTab(tab);
           if (tab !== 'inquiries') setSelectedInquiry(null);
           if (tab !== 'bookings') setSelectedBooking(null);
         }}
         onLogout={handleLogout}
-        onViewPublicSite={onViewPublicSite}
+        onViewWebsite={onViewPublicSite}
         pendingInquiriesCount={pendingInquiriesCount}
         upcomingBookingsCount={upcomingBookingsCount}
+        mobileOpen={mobileOpen}
+        onCloseMobile={() => setMobileOpen(false)}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-neutral-950/60 overflow-y-auto">
+      <main className="flex-1 flex flex-col min-w-0 bg-neutral-950/60 overflow-y-auto lg:pl-64">
         {/* Top Operational Bar */}
         <header className="h-16 border-b border-neutral-900 px-6 flex items-center justify-between bg-black/40 backdrop-blur-sm sticky top-0 z-30">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="lg:hidden p-1.5 text-neutral-400 hover:text-white border border-neutral-800 rounded bg-neutral-900"
+              aria-label="Open sidebar menu"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <span className="text-xs font-mono uppercase tracking-widest text-neutral-400">
               NINETIES SHOTS
             </span>
@@ -306,19 +316,19 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
                   stats={stats}
                   recentInquiries={inquiries.slice(0, 5)}
                   upcomingBookings={bookings.slice(0, 5)}
-                  onSelectInquiry={inq => {
+                  onOpenInquiry={inq => {
                     setSelectedInquiry(inq);
                     setActiveTab('inquiries');
                   }}
-                  onSelectBooking={booking => {
+                  onOpenBooking={booking => {
                     setSelectedBooking(booking);
                     setActiveTab('bookings');
                   }}
-                  onCreateBooking={() => {
+                  onNewBooking={() => {
                     setIsCreatingNewBooking(true);
                     setActiveTab('bookings');
                   }}
-                  onViewPublicSite={onViewPublicSite}
+                  onNavigateTab={tab => setActiveTab(tab)}
                 />
               )}
 

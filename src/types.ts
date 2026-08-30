@@ -46,6 +46,37 @@ export interface ServiceItem {
   highlights: string[];
   deliverables: string[];
   sampleImage: string;
+  priceAmount?: number; // Canonical GHS price
+  originalAmount?: number;
+  originalCurrency?: string;
+  exchangeRate?: number;
+  rateType?: 'live' | 'manual';
+  quoteRangeText?: string;
+}
+
+export type SupportedCurrency = 'GHS' | 'USD' | 'GBP' | 'EUR' | 'NGN' | string;
+
+export interface CurrencyConversionRecord {
+  id: string;
+  originalAmount: number;
+  originalCurrency: string;
+  exchangeRate: number;
+  convertedAmount: number; // in GHS
+  convertedCurrency: 'GHS';
+  rateType: 'live' | 'manual';
+  provider: string;
+  convertedAt: string;
+  note?: string;
+}
+
+export interface ExchangeRateInfo {
+  baseCurrency: string;
+  targetCurrency: 'GHS';
+  rate: number;
+  lastUpdated: string;
+  provider: string;
+  isLive: boolean;
+  error?: string;
 }
 
 export interface SocialLink {
@@ -143,12 +174,17 @@ export interface Booking {
   date: string;
   time?: string;
   location: string;
-  quoteAmount: number;
-  depositAmount: number;
-  additionalPayment: number;
-  finalPayment: number;
-  refundAmount: number;
-  totalPaid: number;
+  quoteAmount: number; // Canonical business value in GHS
+  originalAmount?: number; // Original quote in source currency (e.g. 500)
+  originalCurrency?: string; // Source currency code (e.g. 'USD')
+  exchangeRate?: number; // Conversion rate used (e.g. 15.20)
+  rateType?: 'live' | 'manual'; // Live or manual rate override
+  convertedAt?: string; // Timestamp of conversion
+  depositAmount: number; // In GHS
+  additionalPayment: number; // In GHS
+  finalPayment: number; // In GHS
+  refundAmount: number; // In GHS
+  totalPaid: number; // In GHS
   paymentStatus: PaymentStatus;
   bookingStatus: BookingStatus;
   notes: string;

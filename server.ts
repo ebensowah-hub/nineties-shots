@@ -4,6 +4,12 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { db } from './src/server/db';
 import { AdminUser } from './src/types';
+import {
+  getLiveRateToGHS,
+  getAllRatesToGHS,
+  calculateGHSConversion,
+  SUPPORTED_CURRENCIES
+} from './src/server/currencyService';
 
 interface AuthenticatedRequest extends Request {
   adminUser?: AdminUser;
@@ -521,6 +527,131 @@ async function startServer() {
 
   app.get('/api/admin/audit-logs', requireAdminAuth, (req: AuthenticatedRequest, res) => {
     res.json(db.getAuditLogs());
+  });
+
+  // ==================== CURRENCY CONVERSION ENDPOINTS ====================
+  // Get live exchange rates status for all supported currencies to GHS
+  app.get('/api/admin/currency/rates', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const base = req.query.base as string;
+      if (base) {
+        const rateInfo = await getLiveRateToGHS(base);
+        res.json(rateInfo);
+        return;
+      }
+      const allRates = await getAllRatesToGHS();
+      res.json({
+        targetCurrency: 'GHS',
+        targetSymbol: 'GH₵',
+        supportedCurrencies: SUPPORTED_CURRENCIES,
+        ...allRates
+      });
+    } catch (err: any) {
+      console.error('Error fetching currency rates:', err);
+      res.status(500).json({ error: 'Failed to retrieve currency exchange rates.' });
+    }
+  });
+
+  // Perform a currency conversion to GHS (Server-authoritative calculation)
+  app.post('/api/admin/currency/convert', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { amount, fromCurrency, manualRate, note } = req.body;
+
+      const numAmount = Number(amount);
+      if (isNaN(numAmount) || numAmount <= 0) {
+        res.status(400).json({ error: 'Validation failed: A valid positive amount is required.' });
+        return;
+      }
+
+      const currencyCode = String(fromCurrency || 'GHS').toUpperCase().trim();
+      if (!currencyCode) {
+        res.status(400).json({ error: 'Validation failed: Source currency is required.' });
+        return;
+      }
+
+      let rate = 1.0;
+      let rateType: 'live' | 'manual' = 'live';
+      let provider = 'Bank of Ghana (Parity)';
+      let convertedAt = new Date().toISOString();
+
+      if (currencyCode === 'GHS') {
+        rate = 1.0;
+        rateType = 'live';
+        provider = 'Bank of Ghana (Parity)';
+      } else if (manualRate !== undefined && manualRate !== null && Number(manualRate) > 0) {
+        // Manual rate override specified by authorized admin
+        rate = Number(manualRate);
+        rateType = 'manual';
+        provider = 'Manual Admin Override';
+      } else {
+        // Live rate request from external provider
+        const liveInfo = await getLiveRateToGHS(currencyCode);
+        if (!liveInfo.success || !liveInfo.rate || liveInfo.rate <= 0) {
+          res.status(503).json({
+            success: false,
+            error: 'Exchange rate unavailable. Please retry or enter a manual exchange rate.',
+            isLive: false,
+            baseCurrency: currencyCode,
+            targetCurrency: 'GHS'
+          });
+          return;
+        }
+
+        rate = liveInfo.rate;
+        rateType = 'live';
+        provider = liveInfo.provider;
+        convertedAt = liveInfo.lastUpdated;
+      }
+
+      // Calculate precise conversion in integer pesewas
+      const { ghsAmount } = calculateGHSConversion(numAmount, rate);
+
+      // Save conversion history record
+      const record = db.addConversionRecord(
+        {
+          originalAmount: numAmount,
+          originalCurrency: currencyCode,
+          exchangeRate: rate,
+          convertedAmount: ghsAmount,
+          convertedCurrency: 'GHS',
+          rateType,
+          provider,
+          convertedAt,
+          note: note ? String(note).slice(0, 200) : undefined
+        },
+        req.adminUser!.username
+      );
+
+      res.json({
+        success: true,
+        conversion: record,
+        formattedOriginal: `${currencyCode} ${numAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        formattedGHS: `GH₵${ghsAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      });
+    } catch (err: any) {
+      console.error('Error converting currency:', err);
+      res.status(500).json({ error: 'Server error processing currency conversion.' });
+    }
+  });
+
+  // Get conversion history
+  app.get('/api/admin/currency/history', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const history = db.getConversionHistory(50);
+      res.json(history);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to retrieve conversion history.' });
+    }
+  });
+
+  // Clear conversion history
+  app.post('/api/admin/currency/history/clear', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      db.clearConversionHistory(req.adminUser!.username);
+      res.json({ success: true, message: 'Conversion history cleared.' });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to clear conversion history.' });
+    }
   });
 
   // ==================== VITE & STATIC SERVING ====================

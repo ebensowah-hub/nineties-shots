@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivePage, CategorySlug } from '../types';
 import { siteConfig } from '../data/siteConfig';
-import { ArrowUp, Instagram, MessageSquare, ArrowUpRight } from 'lucide-react';
+import { ArrowUp, ArrowUpRight, Lock } from 'lucide-react';
 
 interface FooterProps {
   onNavigate: (page: ActivePage, category?: CategorySlug) => void;
@@ -50,7 +50,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                       onNavigate(link.page);
                       scrollToTop();
                     }}
-                    className="text-xs uppercase tracking-wider text-neutral-300 hover:text-white transition-colors text-left"
+                    className="text-xs uppercase tracking-wider text-neutral-300 hover:text-white transition-colors text-left py-1"
                   >
                     {link.label}
                   </button>
@@ -68,7 +68,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
               {siteConfig.contact.email && (
                 <a
                   href={`mailto:${siteConfig.contact.email}`}
-                  className="text-xs font-mono text-neutral-200 hover:text-white hover:underline block"
+                  className="text-xs font-mono text-neutral-200 hover:text-white hover:underline block py-1"
                 >
                   {siteConfig.contact.email}
                 </a>
@@ -77,7 +77,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                 href={`https://wa.me/${siteConfig.contact.whatsappNumber.replace(/[^0-9]/g, '')}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-neutral-400 hover:text-white font-mono block transition-colors"
+                className="text-xs text-neutral-400 hover:text-white font-mono block transition-colors py-1"
               >
                 WhatsApp / Call: <span className="text-white">{siteConfig.contact.phone || siteConfig.contact.whatsappNumber}</span>
               </a>
@@ -90,7 +90,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                   href={social.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white transition-colors py-1"
                 >
                   <span>{social.label}</span>
                   <ArrowUpRight className="w-3 h-3" />
@@ -107,31 +107,40 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Bottom Bar: Copyright, Owner Portal, and Back to Top */}
-        <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-neutral-500">
-          <div className="flex items-center gap-4">
+        {/* Bottom Bar: Copyright, Owner Portal Login, and Back to Top */}
+        <div className="pt-6 border-t border-neutral-950 flex flex-col md:flex-row items-center justify-between gap-6 text-xs font-mono text-neutral-500">
+          {/* Copyright notice */}
+          <div className="text-center md:text-left text-[11px] text-neutral-500 order-2 md:order-1">
             <span>© {siteConfig.copyrightYear} {siteConfig.brandName}. ALL RIGHTS RESERVED.</span>
-            <span className="text-neutral-800">•</span>
+          </div>
+
+          {/* Admin Entry & Back to Top Utility Controls */}
+          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8 order-1 md:order-2">
+            {/* Discoverable yet discreet PORTAL LOGIN */}
             <button
+              id="footer-portal-login-btn"
               onClick={() => {
                 window.location.hash = 'admin';
               }}
-              className="text-neutral-600 hover:text-neutral-400 text-[10px] uppercase tracking-widest transition-colors cursor-pointer"
+              className="group inline-flex items-center gap-2 px-3.5 py-2 rounded border border-neutral-800/80 bg-neutral-950/70 hover:bg-neutral-900 hover:border-neutral-700 text-neutral-300 hover:text-white transition-all duration-200 text-[11px] font-mono tracking-[0.18em] uppercase cursor-pointer min-h-[44px]"
+              aria-label="Admin Portal Login"
             >
-              Portal Login
+              <Lock className="w-3 h-3 text-neutral-500 group-hover:text-neutral-300 transition-colors" />
+              <span>PORTAL LOGIN</span>
+            </button>
+
+            {/* Back to top button */}
+            <button
+              onClick={scrollToTop}
+              className="inline-flex items-center gap-2 text-neutral-400 hover:text-white transition-colors group cursor-pointer min-h-[44px] px-2"
+              aria-label="Back to top of page"
+            >
+              <span className="text-[10px] uppercase tracking-widest">Back to top</span>
+              <div className="w-6 h-6 rounded-full border border-neutral-800 flex items-center justify-center group-hover:border-neutral-500 transition-colors">
+                <ArrowUp className="w-3 h-3" />
+              </div>
             </button>
           </div>
-
-          <button
-            onClick={scrollToTop}
-            className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors group cursor-pointer"
-            aria-label="Back to top of page"
-          >
-            <span className="text-[10px] uppercase tracking-widest">Back to top</span>
-            <div className="w-6 h-6 rounded-full border border-neutral-800 flex items-center justify-center group-hover:border-neutral-500">
-              <ArrowUp className="w-3 h-3" />
-            </div>
-          </button>
         </div>
       </div>
     </footer>

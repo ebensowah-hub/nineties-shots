@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Booking, BookingStatus, PaymentStatus } from '../../types';
 import {
   CalendarCheck,
@@ -13,8 +13,13 @@ import {
   FileText,
   User,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Globe,
+  Edit3,
+  RefreshCw
 } from 'lucide-react';
+import { SUPPORTED_CURRENCIES, formatGHS, getCurrencyConfig, calculateGHSConversion } from '../../lib/currency';
+import { getExchangeRates } from '../../lib/api';
 
 interface AdminBookingsProps {
   bookings: Booking[];
@@ -41,6 +46,15 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showCreateModal, setShowCreateModal] = useState(isCreatingNew);
 
+  // Exchange rates
+  const [liveRates, setLiveRates] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    getExchangeRates()
+      .then(res => setLiveRates(res.rates || {}))
+      .catch(() => {});
+  }, []);
+
   // Form state for creating a new booking
   const [newClientName, setNewClientName] = useState('');
   const [newClientEmail, setNewClientEmail] = useState('');
@@ -49,18 +63,63 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
   const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
   const [newTime, setNewTime] = useState('10:00 AM');
   const [newLocation, setNewLocation] = useState('Studio');
-  const [newQuote, setNewQuote] = useState<number>(0);
+
+  // Currency & Quote states for New Booking
+  const [newCurrency, setNewCurrency] = useState('GHS');
+  const [newQuoteInput, setNewQuoteInput] = useState<string>('0');
+  const [newManualRate, setNewManualRate] = useState<string>('');
+  const [newUseManualRate, setNewUseManualRate] = useState(false);
+  const [newCalculatedGHSQuote, setNewCalculatedGHSQuote] = useState<number>(0);
+  const [newUsedRate, setNewUsedRate] = useState<number>(1);
+  const [newRateType, setNewRateType] = useState<'live' | 'manual'>('live');
+
+  // Deposit in GHS
   const [newDeposit, setNewDeposit] = useState<number>(0);
   const [newNotes, setNewNotes] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
   // Financial fields for editing selected booking
-  const [editQuote, setEditQuote] = useState(0);
+  const [editQuoteGHS, setEditQuoteGHS] = useState(0);
+  const [editOriginalCurrency, setEditOriginalCurrency] = useState('GHS');
+  const [editOriginalAmount, setEditOriginalAmount] = useState<number | undefined>(undefined);
+  const [editExchangeRate, setEditExchangeRate] = useState<number | undefined>(undefined);
+  const [editRateType, setEditRateType] = useState<'live' | 'manual' | undefined>('live');
+
   const [editDeposit, setEditDeposit] = useState(0);
   const [editAdditional, setEditAdditional] = useState(0);
   const [editFinal, setEditFinal] = useState(0);
   const [editRefund, setEditRefund] = useState(0);
   const [editNotes, setEditNotes] = useState('');
+
+  // Auto-calculate GHS for new booking quote
+  useEffect(() => {
+    const rawNum = parseFloat(newQuoteInput) || 0;
+    if (newCurrency === 'GHS') {
+      setNewCalculatedGHSQuote(rawNum);
+      setNewUsedRate(1);
+      setNewRateType('live');
+      return;
+    }
+
+    if (newUseManualRate && newManualRate && parseFloat(newManualRate) > 0) {
+      const r = parseFloat(newManualRate);
+      const res = calculateGHSConversion(rawNum, r);
+      setNewCalculatedGHSQuote(res.ghsAmount);
+      setNewUsedRate(r);
+      setNewRateType('manual');
+    } else {
+      const rateInfo = liveRates[newCurrency];
+      if (rateInfo?.isLive && rateInfo.rate > 0) {
+        const r = rateInfo.rate;
+        const res = calculateGHSConversion(rawNum, r);
+        setNewCalculatedGHSQuote(res.ghsAmount);
+        setNewUsedRate(r);
+        setNewRateType('live');
+      } else {
+        setNewCalculatedGHSQuote(0);
+      }
+    }
+  }, [newQuoteInput, newCurrency, newUseManualRate, newManualRate, liveRates]);
 
   const bookingStatuses: BookingStatus[] = [
     'Inquiry',
@@ -95,7 +154,12 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
   const handleOpenDetail = (booking: Booking) => {
     onSelectBooking(booking);
-    setEditQuote(booking.quoteAmount || 0);
+    setEditQuoteGHS(booking.quoteAmount || 0);
+    setEditOriginalCurrency(booking.originalCurrency || 'GHS');
+    setEditOriginalAmount(booking.originalAmount);
+    setEditExchangeRate(booking.exchangeRate);
+    setEditRateType(booking.rateType);
+
     setEditDeposit(booking.depositAmount || 0);
     setEditAdditional(booking.additionalPayment || 0);
     setEditFinal(booking.finalPayment || 0);
@@ -108,7 +172,11 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
     try {
       setActionLoading(true);
       await onUpdateBooking(selectedBooking.id, {
-        quoteAmount: editQuote,
+        quoteAmount: editQuoteGHS,
+        originalCurrency: editOriginalCurrency !== 'GHS' ? editOriginalCurrency : undefined,
+        originalAmount: editOriginalAmount,
+        exchangeRate: editExchangeRate,
+        rateType: editRateType,
         depositAmount: editDeposit,
         additionalPayment: editAdditional,
         finalPayment: editFinal,
@@ -136,6 +204,8 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
     try {
       setActionLoading(true);
+      const rawQuote = parseFloat(newQuoteInput) || 0;
+
       await onCreateBooking({
         clientName: newClientName.trim(),
         clientEmail: newClientEmail.trim(),
@@ -144,20 +214,30 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         date: newDate,
         time: newTime,
         location: newLocation,
-        quoteAmount: Number(newQuote),
+        quoteAmount: newCalculatedGHSQuote,
+        originalAmount: newCurrency !== 'GHS' ? rawQuote : undefined,
+        originalCurrency: newCurrency !== 'GHS' ? newCurrency : undefined,
+        exchangeRate: newCurrency !== 'GHS' ? newUsedRate : undefined,
+        rateType: newCurrency !== 'GHS' ? newRateType : undefined,
+        convertedAt: newCurrency !== 'GHS' ? new Date().toISOString() : undefined,
         depositAmount: Number(newDeposit),
         bookingStatus: 'Confirmed',
         notes: newNotes
       });
+
       setShowCreateModal(false);
       if (onCloseCreateNew) onCloseCreateNew();
+
       // Reset
       setNewClientName('');
       setNewClientEmail('');
       setNewClientPhone('');
-      setNewQuote(0);
+      setNewQuoteInput('0');
       setNewDeposit(0);
       setNewNotes('');
+      setNewCurrency('GHS');
+      setNewManualRate('');
+      setNewUseManualRate(false);
     } finally {
       setActionLoading(false);
     }
@@ -169,7 +249,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-900 pb-6">
         <div>
           <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-neutral-500 block">
-            CALENDAR COMMISSIONS & REVENUE
+            CALENDAR COMMISSIONS & REVENUE (GH₵ BUSINESS CURRENCY)
           </span>
           <h1 className="text-2xl sm:text-3xl font-heading text-white uppercase tracking-tight">
             Bookings & Shoots
@@ -201,7 +281,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
           <button
             onClick={() => setStatusFilter('all')}
-            className={`px-3 py-2 text-xs font-mono uppercase tracking-wider border whitespace-nowrap ${
+            className={`px-3 py-2 text-xs font-mono uppercase tracking-wider border whitespace-nowrap cursor-pointer ${
               statusFilter === 'all'
                 ? 'bg-white text-black border-white font-semibold'
                 : 'bg-neutral-950 text-neutral-400 border-neutral-900 hover:border-neutral-700'
@@ -215,7 +295,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
-                className={`px-3 py-2 text-xs font-mono uppercase tracking-wider border whitespace-nowrap ${
+                className={`px-3 py-2 text-xs font-mono uppercase tracking-wider border whitespace-nowrap cursor-pointer ${
                   statusFilter === s
                     ? 'bg-white text-black border-white font-semibold'
                     : 'bg-neutral-950 text-neutral-400 border-neutral-900 hover:border-neutral-700'
@@ -228,118 +308,101 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
         </div>
       </div>
 
-      {/* Bookings Table */}
+      {/* Bookings List / Table */}
       {filteredBookings.length === 0 ? (
-        <div className="p-16 bg-neutral-950 border border-neutral-900 text-center space-y-3">
-          <CalendarCheck className="w-10 h-10 mx-auto text-neutral-600 stroke-[1.2]" />
-          <h3 className="text-sm font-mono text-neutral-300 uppercase tracking-wider">
-            No bookings found.
-          </h3>
-          <p className="text-xs font-mono text-neutral-500">
-            Create a new shoot record or convert an incoming inquiry to see it here.
-          </p>
+        <div className="p-12 text-center bg-neutral-950 border border-neutral-900 space-y-3">
+          <CalendarCheck className="w-8 h-8 mx-auto text-neutral-600" />
+          <p className="text-sm font-mono text-neutral-400">No booking records match the selected filters.</p>
         </div>
       ) : (
-        <div className="bg-neutral-950 border border-neutral-900 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-neutral-900/60 border-b border-neutral-900 text-neutral-500 uppercase tracking-widest text-[10px]">
-                <tr>
-                  <th className="py-3 px-4">Ref</th>
-                  <th className="py-3 px-4">Client</th>
-                  <th className="py-3 px-4">Service</th>
-                  <th className="py-3 px-4">Date & Time</th>
-                  <th className="py-3 px-4">Quote / Paid</th>
-                  <th className="py-3 px-4">Payment</th>
-                  <th className="py-3 px-4">Shoot Status</th>
-                  <th className="py-3 px-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-900">
-                {filteredBookings.map(b => (
-                  <tr
-                    key={b.id}
-                    onClick={() => handleOpenDetail(b)}
-                    className="hover:bg-neutral-900/40 cursor-pointer transition-colors"
+        <div className="space-y-3">
+          {filteredBookings.map(b => (
+            <div
+              key={b.id}
+              onClick={() => handleOpenDetail(b)}
+              className="p-5 bg-neutral-950 border border-neutral-900 hover:border-neutral-700 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer"
+            >
+              <div className="space-y-1.5 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono px-2 py-0.5 bg-neutral-900 text-neutral-300 border border-neutral-800 font-bold">
+                    {b.bookingReference}
+                  </span>
+                  <span className="text-xs font-mono font-bold text-white uppercase">{b.clientName}</span>
+                  <span className="text-[10px] font-mono text-neutral-500">• {b.serviceTitle}</span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 text-xs font-mono text-neutral-400">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>{b.date}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>{b.time || '10:00 AM'}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-neutral-500" />
+                    <span>{b.location || 'Studio'}</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Financial Snapshot with Dual Currency Indicator */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 border-t sm:border-t-0 pt-3 sm:pt-0 border-neutral-900">
+                <div className="text-left sm:text-right font-mono">
+                  <span className="text-[10px] text-neutral-500 uppercase block">Quote Value</span>
+                  <span className="text-sm font-bold text-emerald-400">
+                    {formatGHS(b.quoteAmount || 0)}
+                  </span>
+                  {b.originalCurrency && b.originalCurrency !== 'GHS' && b.originalAmount && (
+                    <span className="text-[9px] text-neutral-400 block">
+                      ({b.originalCurrency} {b.originalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} @ GH₵{b.exchangeRate?.toFixed(2)})
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className={`text-[10px] font-mono uppercase px-2.5 py-1 border ${
+                      b.bookingStatus === 'Confirmed'
+                        ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                        : b.bookingStatus === 'Completed'
+                        ? 'bg-blue-950/60 border-blue-800 text-blue-300'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-300'
+                    }`}
                   >
-                    <td className="py-3 px-4 text-white font-bold">{b.bookingReference}</td>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-white">{b.clientName}</div>
-                      <div className="text-[10px] text-neutral-500">{b.clientPhone || b.clientEmail}</div>
-                    </td>
-                    <td className="py-3 px-4 text-neutral-300">{b.serviceTitle}</td>
-                    <td className="py-3 px-4 text-neutral-300">
-                      <div>{b.date}</div>
-                      <div className="text-[10px] text-neutral-500">{b.time || '10:00 AM'}</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="text-white font-bold">
-                        {b.quoteAmount > 0 ? `$${b.quoteAmount}` : 'Unquoted'}
-                      </div>
-                      <div className="text-[10px] text-emerald-400">
-                        Paid: ${b.totalPaid}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span
-                        className={`text-[9px] uppercase px-2 py-0.5 border ${
-                          b.paymentStatus === 'Paid'
-                            ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
-                            : b.paymentStatus === 'Deposit Paid' || b.paymentStatus === 'Partially Paid'
-                            ? 'bg-blue-950/60 text-blue-300 border-blue-800'
-                            : b.paymentStatus === 'Refunded'
-                            ? 'bg-red-950/60 text-red-300 border-red-800'
-                            : 'bg-neutral-900 text-neutral-400 border-neutral-800'
-                        }`}
-                      >
-                        {b.paymentStatus}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span
-                        className={`text-[9px] uppercase px-2 py-0.5 border ${
-                          b.bookingStatus === 'Confirmed'
-                            ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
-                            : b.bookingStatus === 'Completed'
-                            ? 'bg-neutral-900 text-neutral-300 border-neutral-700'
-                            : b.bookingStatus === 'Cancelled'
-                            ? 'bg-red-950/60 text-red-400 border-red-900'
-                            : 'bg-amber-950/60 text-amber-300 border-amber-800'
-                        }`}
-                      >
-                        {b.bookingStatus}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleOpenDetail(b);
-                        }}
-                        className="px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 text-white text-[10px] uppercase tracking-wider border border-neutral-800"
-                      >
-                        Manage
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    {b.bookingStatus}
+                  </span>
+
+                  <span
+                    className={`text-[10px] font-mono uppercase px-2.5 py-1 border ${
+                      b.paymentStatus === 'Paid'
+                        ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                        : b.paymentStatus === 'Deposit Paid' || b.paymentStatus === 'Partially Paid'
+                        ? 'bg-amber-950/60 border-amber-800 text-amber-300'
+                        : 'bg-neutral-900 border-neutral-800 text-neutral-400'
+                    }`}
+                  >
+                    {b.paymentStatus}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Create New Booking Modal */}
-      {(showCreateModal || isCreatingNew) && (
+      {/* New Booking Modal */}
+      {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-neutral-950 border border-neutral-800 w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
             <div className="p-6 border-b border-neutral-900 flex items-center justify-between bg-neutral-900/40">
               <div>
                 <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest block">
-                  NEW DIRECT COMMISSION
+                  CALENDAR & FINANCIAL SCHEDULING
                 </span>
                 <h2 className="text-lg font-heading text-white uppercase tracking-wider">
-                  Create Booking Record
+                  New Shoot Commission
                 </h2>
               </div>
               <button
@@ -347,7 +410,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                   setShowCreateModal(false);
                   if (onCloseCreateNew) onCloseCreateNew();
                 }}
-                className="p-1 text-neutral-500 hover:text-white"
+                className="p-1 text-neutral-500 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -361,7 +424,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                   required
                   value={newClientName}
                   onChange={e => setNewClientName(e.target.value)}
-                  placeholder="e.g. John Doe"
+                  placeholder="e.g. Nana Kwame"
                   className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
                 />
               </div>
@@ -410,7 +473,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                     type="text"
                     value={newLocation}
                     onChange={e => setNewLocation(e.target.value)}
-                    placeholder="Studio / Location"
+                    placeholder="Studio / Accra Location"
                     className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
                   />
                 </div>
@@ -438,36 +501,113 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] text-neutral-400 uppercase">Total Quote ($)</label>
-                  <input
-                    type="number"
-                    value={newQuote}
-                    onChange={e => setNewQuote(Number(e.target.value))}
-                    className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
-                    placeholder="0"
-                  />
+              {/* Quote Currency & Calculation Section */}
+              <div className="p-4 bg-neutral-900/50 border border-neutral-800 space-y-3">
+                <span className="text-[10px] uppercase font-bold text-white flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Commission Quote & Foreign Currency Conversion</span>
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-neutral-400 uppercase">Quote Currency</label>
+                    <select
+                      value={newCurrency}
+                      onChange={e => setNewCurrency(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 p-2 text-white text-xs"
+                    >
+                      {SUPPORTED_CURRENCIES.map(c => (
+                        <option key={c.code} value={c.code}>
+                          {c.flag} {c.code} ({c.symbol})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="text-[10px] text-neutral-400 uppercase">
+                      Agreed Quote Amount ({getCurrencyConfig(newCurrency).symbol})
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={newQuoteInput}
+                      onChange={e => setNewQuoteInput(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 p-2 text-white font-mono"
+                      placeholder="0"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] text-neutral-400 uppercase">Deposit Received ($)</label>
+
+                {newCurrency !== 'GHS' && (
+                  <div className="space-y-2 pt-2 border-t border-neutral-800">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-neutral-400">
+                        Conversion Mode: {newUseManualRate ? 'Manual Rate' : 'Live Mid-Market Rate'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setNewUseManualRate(!newUseManualRate)}
+                        className="text-amber-400 hover:underline cursor-pointer"
+                      >
+                        {newUseManualRate ? 'Use Live Provider Rate' : 'Enter Manual Override Rate'}
+                      </button>
+                    </div>
+
+                    {newUseManualRate && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-amber-400 uppercase">
+                          Manual Exchange Rate (1 {newCurrency} = ? GH₵)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          value={newManualRate}
+                          onChange={e => setNewManualRate(e.target.value)}
+                          placeholder="15.20"
+                          className="w-full bg-neutral-900 border border-amber-800/60 p-2 text-white font-mono"
+                        />
+                      </div>
+                    )}
+
+                    <div className="p-3 bg-neutral-950 border border-emerald-900/60 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-neutral-400 uppercase block">Canonical Business Value</span>
+                        <span className="text-sm font-bold text-emerald-400 font-mono">
+                          {formatGHS(newCalculatedGHSQuote)}
+                        </span>
+                      </div>
+                      <div className="text-right text-[10px] text-neutral-400 font-mono">
+                        <span>1 {newCurrency} = GH₵{newUsedRate.toFixed(2)}</span>
+                        <span className="block text-[9px] text-neutral-500">({newRateType})</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Deposit in GHS */}
+                <div className="pt-2 border-t border-neutral-800 space-y-1">
+                  <label className="text-[10px] text-neutral-400 uppercase">Deposit Received (GH₵)</label>
                   <input
                     type="number"
+                    step="any"
+                    min="0"
                     value={newDeposit}
                     onChange={e => setNewDeposit(Number(e.target.value))}
-                    className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
+                    className="w-full bg-neutral-900 border border-neutral-800 p-2 text-white font-mono"
                     placeholder="0"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] text-neutral-400 uppercase">Internal Booking Notes</label>
+                <label className="text-[10px] text-neutral-400 uppercase">Internal Production Notes</label>
                 <textarea
                   rows={2}
                   value={newNotes}
                   onChange={e => setNewNotes(e.target.value)}
-                  placeholder="Gear requirements, call sheets, lighting setup..."
+                  placeholder="Moodboard links, lighting gear, client deliverables..."
                   className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
                 />
               </div>
@@ -479,14 +619,14 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                     setShowCreateModal(false);
                     if (onCloseCreateNew) onCloseCreateNew();
                   }}
-                  className="px-4 py-2 bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800 uppercase"
+                  className="px-4 py-2 bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800 uppercase cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-5 py-2 bg-white text-black font-bold uppercase tracking-wider"
+                  className="px-5 py-2 bg-white text-black font-bold uppercase tracking-wider cursor-pointer"
                 >
                   Save Booking
                 </button>
@@ -518,45 +658,36 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
               <button
                 onClick={() => onSelectBooking(null)}
-                className="p-1.5 text-neutral-500 hover:text-white"
+                className="p-1 text-neutral-500 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6 flex-1 text-xs font-mono">
-              {/* Shoot Status Selector */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] text-neutral-500 uppercase tracking-widest">
-                  SHOOT WORKFLOW STATUS
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {bookingStatuses.map(st => (
-                    <button
-                      key={st}
-                      disabled={actionLoading}
-                      onClick={() => handleStatusChange(st)}
-                      className={`px-3 py-1 text-xs uppercase tracking-wider border transition-colors ${
-                        selectedBooking.bookingStatus === st
-                          ? 'bg-white text-black border-white font-bold'
-                          : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white'
-                      }`}
-                    >
-                      {st}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Shoot Details */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-neutral-900/40 border border-neutral-900">
+            {/* Body */}
+            <div className="p-6 overflow-y-auto space-y-6 text-xs font-mono">
+              {/* Quick Status Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-neutral-900/40 border border-neutral-900">
                 <div>
-                  <span className="text-[10px] text-neutral-500 uppercase block">SERVICE</span>
-                  <div className="text-white font-semibold">{selectedBooking.serviceTitle}</div>
+                  <span className="text-[10px] text-neutral-500 uppercase block">STATUS</span>
+                  <select
+                    value={selectedBooking.bookingStatus}
+                    onChange={e => handleStatusChange(e.target.value as BookingStatus)}
+                    className="bg-transparent text-white font-bold uppercase focus:outline-none cursor-pointer"
+                  >
+                    {bookingStatuses.map(s => (
+                      <option key={s} value={s} className="bg-neutral-900">
+                        {s}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
-                  <span className="text-[10px] text-neutral-500 uppercase block">DATE & TIME</span>
+                  <span className="text-[10px] text-neutral-500 uppercase block">PAYMENT</span>
+                  <div className="text-emerald-400 font-bold">{selectedBooking.paymentStatus}</div>
+                </div>
+                <div>
+                  <span className="text-[10px] text-neutral-500 uppercase block">SHOOT DATE</span>
                   <div className="text-white">{selectedBooking.date} • {selectedBooking.time || '10:00 AM'}</div>
                 </div>
                 <div>
@@ -570,71 +701,92 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
                   <span className="font-bold text-white uppercase tracking-widest text-[11px] flex items-center gap-1.5">
                     <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>FINANCIAL & PAYMENT BREAKDOWN</span>
+                    <span>FINANCIAL & PAYMENT BREAKDOWN (GH₵ CANONICAL)</span>
                   </span>
                   <span className="text-[10px] font-mono text-neutral-400">
-                    Calculated Total Paid:{' '}
+                    Total Paid:{' '}
                     <span className="text-emerald-400 font-bold">
-                      ${Math.max(0, (editDeposit + editAdditional + editFinal) - editRefund)}
+                      {formatGHS(Math.max(0, (editDeposit + editAdditional + editFinal) - editRefund))}
                     </span>
                   </span>
                 </div>
 
+                {/* Original Quote Currency Info if foreign */}
+                {selectedBooking.originalCurrency && selectedBooking.originalCurrency !== 'GHS' && (
+                  <div className="p-3 bg-neutral-950 border border-neutral-800 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-[10px] text-neutral-500 uppercase block">Foreign Currency Quote</span>
+                      <span className="text-white font-bold">
+                        {selectedBooking.originalCurrency} {selectedBooking.originalAmount?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="text-right text-[10px] text-neutral-400">
+                      <span>Rate Used: 1 {selectedBooking.originalCurrency} = GH₵{selectedBooking.exchangeRate?.toFixed(2)}</span>
+                      <span className="block text-[9px] text-neutral-500">({selectedBooking.rateType || 'live'})</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] text-neutral-400 uppercase">Quote Amount ($)</label>
+                    <label className="text-[10px] text-neutral-400 uppercase">Quote Amount (GH₵)</label>
                     <input
                       type="number"
-                      value={editQuote}
-                      onChange={e => setEditQuote(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white"
+                      step="any"
+                      value={editQuoteGHS}
+                      onChange={e => setEditQuoteGHS(Number(e.target.value))}
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] text-neutral-400 uppercase">Deposit Paid ($)</label>
+                    <label className="text-[10px] text-neutral-400 uppercase">Deposit Paid (GH₵)</label>
                     <input
                       type="number"
+                      step="any"
                       value={editDeposit}
                       onChange={e => setEditDeposit(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white"
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] text-neutral-400 uppercase">Additional ($)</label>
+                    <label className="text-[10px] text-neutral-400 uppercase">Additional (GH₵)</label>
                     <input
                       type="number"
+                      step="any"
                       value={editAdditional}
                       onChange={e => setEditAdditional(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white"
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] text-neutral-400 uppercase">Final Payment ($)</label>
+                    <label className="text-[10px] text-neutral-400 uppercase">Final Payment (GH₵)</label>
                     <input
                       type="number"
+                      step="any"
                       value={editFinal}
                       onChange={e => setEditFinal(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white"
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] text-neutral-400 uppercase">Refund Issued ($)</label>
+                    <label className="text-[10px] text-neutral-400 uppercase">Refund Issued (GH₵)</label>
                     <input
                       type="number"
+                      step="any"
                       value={editRefund}
                       onChange={e => setEditRefund(Number(e.target.value))}
-                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white"
+                      className="w-full bg-neutral-950 border border-neutral-800 p-2 text-white font-mono"
                     />
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[10px] text-neutral-400 uppercase">Outstanding Balance</label>
-                    <div className="w-full bg-neutral-950 border border-neutral-800 p-2 text-amber-300 font-bold">
-                      ${Math.max(0, editQuote - ((editDeposit + editAdditional + editFinal) - editRefund))}
+                    <div className="w-full bg-neutral-950 border border-neutral-800 p-2 text-amber-300 font-bold font-mono">
+                      {formatGHS(Math.max(0, editQuoteGHS - ((editDeposit + editAdditional + editFinal) - editRefund)))}
                     </div>
                   </div>
                 </div>
@@ -653,7 +805,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                 <button
                   disabled={actionLoading}
                   onClick={handleSaveFinancials}
-                  className="w-full py-2.5 bg-white hover:bg-neutral-200 text-black font-bold uppercase tracking-wider text-xs transition-colors"
+                  className="w-full py-2.5 bg-white hover:bg-neutral-200 text-black font-bold uppercase tracking-wider text-xs transition-colors cursor-pointer"
                 >
                   Save Booking & Financial Updates
                 </button>
@@ -668,7 +820,7 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                     await onDeleteBooking(selectedBooking.id);
                   }
                 }}
-                className="text-red-400 hover:text-red-300 text-xs font-mono uppercase tracking-wider flex items-center gap-1.5"
+                className="text-red-400 hover:text-red-300 text-xs font-mono uppercase tracking-wider flex items-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Delete Booking</span>
@@ -676,9 +828,9 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
 
               <button
                 onClick={() => onSelectBooking(null)}
-                className="px-4 py-2 bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-800 text-xs font-mono uppercase tracking-wider"
+                className="px-4 py-2 bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-800 text-xs font-mono uppercase tracking-wider cursor-pointer"
               >
-                Done
+                Close
               </button>
             </div>
           </div>

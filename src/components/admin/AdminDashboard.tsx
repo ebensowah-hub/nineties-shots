@@ -18,9 +18,9 @@ import {
 } from 'lucide-react';
 
 interface AdminDashboardProps {
-  stats: DashboardStats;
-  recentInquiries: Inquiry[];
-  upcomingBookings: Booking[];
+  stats?: DashboardStats | null;
+  recentInquiries?: Inquiry[];
+  upcomingBookings?: Booking[];
   onNavigateTab: (tab: AdminTab) => void;
   onOpenInquiry: (inquiry: Inquiry) => void;
   onOpenBooking: (booking: Booking) => void;
@@ -29,61 +29,73 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   stats,
-  recentInquiries,
-  upcomingBookings,
+  recentInquiries = [],
+  upcomingBookings = [],
   onNavigateTab,
   onOpenInquiry,
   onOpenBooking,
   onNewBooking
 }) => {
+  const safeStats: DashboardStats = stats || {
+    totalInquiries: 0,
+    pendingInquiries: 0,
+    activeBookings: 0,
+    completedShoots: 0,
+    totalRevenue: 0,
+    paidRevenue: 0,
+    outstandingRevenue: 0,
+    totalClients: 0,
+    publishedPortfolioCount: 0
+  };
+
   const statCards = [
     {
       label: 'TOTAL INQUIRIES',
-      value: stats.totalInquiries,
-      sub: `${stats.pendingInquiries} awaiting response`,
+      value: safeStats.totalInquiries,
+      sub: `${safeStats.pendingInquiries} awaiting response`,
       icon: Inbox,
       tab: 'inquiries' as AdminTab,
-      highlight: stats.pendingInquiries > 0
+      highlight: safeStats.pendingInquiries > 0
     },
     {
       label: 'ACTIVE BOOKINGS',
-      value: stats.activeBookings,
+      value: safeStats.activeBookings,
       sub: 'Confirmed & scheduled shoots',
       icon: CalendarCheck,
       tab: 'bookings' as AdminTab
     },
     {
       label: 'PENDING INQUIRIES',
-      value: stats.pendingInquiries,
+      value: safeStats.pendingInquiries,
       sub: 'Action required',
       icon: Clock,
       tab: 'inquiries' as AdminTab,
-      highlight: stats.pendingInquiries > 0
+      highlight: safeStats.pendingInquiries > 0
     },
     {
       label: 'COMPLETED SHOOTS',
-      value: stats.completedShoots,
+      value: safeStats.completedShoots,
       sub: 'Delivered commissions',
       icon: CheckCircle2,
       tab: 'bookings' as AdminTab
     },
     {
       label: 'RECORDED REVENUE',
-      value: stats.totalRevenue > 0 ? `$${stats.totalRevenue.toLocaleString()}` : '$0',
-      sub: `Paid: $${stats.paidRevenue.toLocaleString()} // Unpaid: $${stats.outstandingRevenue.toLocaleString()}`,
+      value: safeStats.totalRevenue > 0 ? `GH₵${safeStats.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'GH₵0.00',
+      sub: `Paid: GH₵${safeStats.paidRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} // Unpaid: GH₵${safeStats.outstandingRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: DollarSign,
       tab: 'bookings' as AdminTab
     },
     {
       label: 'TOTAL CLIENTS',
-      value: stats.totalClients,
+      value: safeStats.totalClients,
       sub: 'Unique client records',
       icon: Users,
       tab: 'clients' as AdminTab
     },
     {
       label: 'PUBLISHED PORTFOLIO',
-      value: stats.publishedPortfolioCount,
+      value: safeStats.publishedPortfolioCount,
       sub: 'Active live photographs',
       icon: ImageIcon,
       tab: 'portfolio' as AdminTab
@@ -290,7 +302,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       {booking.date} {booking.time ? `• ${booking.time}` : ''}
                     </span>
                     <span className="text-neutral-300">
-                      {booking.quoteAmount > 0 ? `$${booking.quoteAmount}` : 'Quote TBD'}
+                      {booking.quoteAmount > 0 ? `GH₵${booking.quoteAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : 'Quote TBD'}
                     </span>
                   </div>
                 </div>

@@ -32,23 +32,25 @@ export type AdminTab =
 interface AdminSidebarProps {
   currentTab: AdminTab;
   onSelectTab: (tab: AdminTab) => void;
-  adminUser: AdminUser;
-  pendingInquiriesCount: number;
+  adminUser?: AdminUser | null;
+  pendingInquiriesCount?: number;
+  upcomingBookingsCount?: number;
   onLogout: () => void;
   onViewWebsite: () => void;
-  mobileOpen: boolean;
-  onCloseMobile: () => void;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   currentTab,
   onSelectTab,
   adminUser,
-  pendingInquiriesCount,
+  pendingInquiriesCount = 0,
+  upcomingBookingsCount = 0,
   onLogout,
   onViewWebsite,
-  mobileOpen,
-  onCloseMobile
+  mobileOpen = false,
+  onCloseMobile = () => {}
 }) => {
   const menuItems: { id: AdminTab; label: string; icon: React.FC<{ className?: string }>; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -156,10 +158,10 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           <div className="pt-2 flex items-center justify-between">
             <div className="truncate pr-2">
               <span className="text-[11px] font-mono font-medium text-white truncate block">
-                {adminUser.name || adminUser.username}
+                {adminUser?.name || adminUser?.username || 'Admin'}
               </span>
               <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest block">
-                Role: {adminUser.role}
+                Role: {adminUser?.role || 'owner'}
               </span>
             </div>
 

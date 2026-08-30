@@ -485,3 +485,58 @@ export async function getAdminAuditLogs(): Promise<{ logs: AuditLog[] }> {
   const data = await res.json();
   return Array.isArray(data) ? { logs: data } : data;
 }
+
+// ==================== CURRENCY CONVERSION ====================
+export async function getExchangeRates(base?: string): Promise<{
+  targetCurrency: 'GHS';
+  targetSymbol: 'GH₵';
+  rates: Record<string, { rate: number; isLive: boolean; lastUpdated: string; provider: string; error?: string }>;
+  supportedCurrencies: { code: string; name: string; symbol: string; flag: string }[];
+}> {
+  const url = base ? `/api/admin/currency/rates?base=${encodeURIComponent(base)}` : '/api/admin/currency/rates';
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch rates' }));
+    throw new Error(err.error || 'Failed to fetch exchange rates');
+  }
+  return res.json();
+}
+
+export async function convertCurrencyAdmin(
+  amount: number,
+  fromCurrency: string,
+  manualRate?: number,
+  note?: string
+): Promise<{
+  success: boolean;
+  conversion: any;
+  formattedOriginal: string;
+  formattedGHS: string;
+}> {
+  const res = await fetch('/api/admin/currency/convert', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ amount, fromCurrency, manualRate, note })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Exchange rate unavailable');
+  }
+
+  return data;
+}
+
+export async function getConversionHistory(): Promise<any[]> {
+  const res = await fetch('/api/admin/currency/history', { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to load conversion history');
+  return res.json();
+}
+
+export async function clearConversionHistory(): Promise<void> {
+  const res = await fetch('/api/admin/currency/history/clear', {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error('Failed to clear conversion history');
+}

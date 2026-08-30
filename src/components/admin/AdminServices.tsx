@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ServiceItem, CategorySlug } from '../../types';
 import {
   Briefcase,
@@ -9,8 +9,14 @@ import {
   XCircle,
   X,
   ListPlus,
-  Layers
+  Layers,
+  DollarSign,
+  Globe,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
+import { SUPPORTED_CURRENCIES, formatGHS, getCurrencyConfig } from '../../lib/currency';
+import { getExchangeRates, convertCurrencyAdmin } from '../../lib/api';
 
 interface AdminServicesProps {
   services: ServiceItem[];
@@ -38,6 +44,27 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
   const [highlightsInput, setHighlightsInput] = useState('');
   const [deliverablesInput, setDeliverablesInput] = useState('');
 
+  // Pricing & Currency fields
+  const [pricingMode, setPricingMode] = useState<'custom' | 'fixed'>('custom');
+  const [inputCurrency, setInputCurrency] = useState('GHS');
+  const [inputPrice, setInputPrice] = useState<string>('');
+  const [manualRate, setManualRate] = useState<string>('');
+  const [useManualRate, setUseManualRate] = useState(false);
+  const [calculatedGHS, setCalculatedGHS] = useState<number | null>(null);
+  const [usedRate, setUsedRate] = useState<number>(1);
+  const [rateType, setRateType] = useState<'live' | 'manual'>('live');
+  const [converting, setConverting] = useState(false);
+  const [conversionError, setConversionError] = useState<string | null>(null);
+
+  // Live rates cache
+  const [liveRates, setLiveRates] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    getExchangeRates()
+      .then(res => setLiveRates(res.rates || {}))
+      .catch(() => {});
+  }, []);
+
   const baseCategories: { id: CategorySlug; name: string }[] = [
     { id: 'portraits', name: 'Portraits' },
     { id: 'lifestyle', name: 'Lifestyle' },
@@ -61,6 +88,15 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
     setSampleImage('');
     setHighlightsInput('');
     setDeliverablesInput('');
+    setPricingMode('custom');
+    setInputCurrency('GHS');
+    setInputPrice('');
+    setManualRate('');
+    setUseManualRate(false);
+    setCalculatedGHS(null);
+    setUsedRate(1);
+    setRateType('live');
+    setConversionError(null);
     setEditingService(null);
   };
 
@@ -73,8 +109,65 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
     setSampleImage(srv.sampleImage || '');
     setHighlightsInput((srv.highlights || []).join('\n'));
     setDeliverablesInput((srv.deliverables || []).join('\n'));
+
+    if (srv.priceAmount || srv.originalAmount) {
+      setPricingMode('fixed');
+      setInputCurrency(srv.originalCurrency || 'GHS');
+      setInputPrice(String(srv.originalAmount || srv.priceAmount || ''));
+      setCalculatedGHS(srv.priceAmount || null);
+      setUsedRate(srv.exchangeRate || 1);
+      setRateType(srv.rateType || 'live');
+      if (srv.rateType === 'manual' && srv.exchangeRate) {
+        setUseManualRate(true);
+        setManualRate(String(srv.exchangeRate));
+      }
+    } else {
+      setPricingMode('custom');
+      setInputPrice('');
+      setCalculatedGHS(null);
+    }
+
     setShowModal(true);
   };
+
+  // Recalculate GHS on input changes
+  useEffect(() => {
+    if (pricingMode !== 'fixed' || !inputPrice || parseFloat(inputPrice) <= 0) {
+      setCalculatedGHS(null);
+      setConversionError(null);
+      return;
+    }
+
+    const num = parseFloat(inputPrice);
+    if (inputCurrency === 'GHS') {
+      setCalculatedGHS(num);
+      setUsedRate(1);
+      setRateType('live');
+      setConversionError(null);
+      return;
+    }
+
+    if (useManualRate && manualRate && parseFloat(manualRate) > 0) {
+      const r = parseFloat(manualRate);
+      const pesewas = Math.round(num * r * 100);
+      setCalculatedGHS(pesewas / 100);
+      setUsedRate(r);
+      setRateType('manual');
+      setConversionError(null);
+    } else {
+      const rateInfo = liveRates[inputCurrency];
+      if (rateInfo?.isLive && rateInfo.rate > 0) {
+        const r = rateInfo.rate;
+        const pesewas = Math.round(num * r * 100);
+        setCalculatedGHS(pesewas / 100);
+        setUsedRate(r);
+        setRateType('live');
+        setConversionError(null);
+      } else {
+        setConversionError('Live exchange rate unavailable. Please specify a manual exchange rate.');
+      }
+    }
+  }, [inputPrice, inputCurrency, useManualRate, manualRate, pricingMode, liveRates]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,6 +175,9 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
 
     try {
       setActionLoading(true);
+      const numPrice = parseFloat(inputPrice);
+      const isFixed = pricingMode === 'fixed' && !isNaN(numPrice) && numPrice > 0;
+
       const payload: Partial<ServiceItem> = {
         title: title.trim(),
         category,
@@ -89,7 +185,13 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
         description: description.trim(),
         sampleImage: sampleImage.trim() || 'https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80&w=1200',
         highlights: highlightsInput.split('\n').map(s => s.trim()).filter(Boolean),
-        deliverables: deliverablesInput.split('\n').map(s => s.trim()).filter(Boolean)
+        deliverables: deliverablesInput.split('\n').map(s => s.trim()).filter(Boolean),
+        priceAmount: isFixed && calculatedGHS !== null ? calculatedGHS : undefined,
+        originalAmount: isFixed ? numPrice : undefined,
+        originalCurrency: isFixed ? inputCurrency : undefined,
+        exchangeRate: isFixed ? usedRate : undefined,
+        rateType: isFixed ? rateType : undefined,
+        quoteRangeText: isFixed && calculatedGHS !== null ? formatGHS(calculatedGHS) : 'Custom Commission Scoping'
       };
 
       if (editingService) {
@@ -110,7 +212,7 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-900 pb-6">
         <div>
           <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-neutral-500 block">
-            COMMISSION OFFERINGS & PACKAGES
+            COMMISSION OFFERINGS & PACKAGES (GH₵ PRIMARY)
           </span>
           <h1 className="text-2xl sm:text-3xl font-heading text-white uppercase tracking-tight">
             Services & Deliverables
@@ -149,6 +251,23 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
               <p className="text-xs font-mono text-neutral-300 italic">{srv.tagline}</p>
               <p className="text-xs text-neutral-400 font-light line-clamp-2">{srv.description}</p>
 
+              {/* Price & Dual Currency Display */}
+              <div className="pt-1 flex items-center gap-3 text-xs font-mono">
+                <span className="text-[10px] text-neutral-500 uppercase">Pricing:</span>
+                {srv.priceAmount ? (
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-emerald-400">{formatGHS(srv.priceAmount)}</span>
+                    {srv.originalCurrency && srv.originalCurrency !== 'GHS' && srv.originalAmount && (
+                      <span className="text-[10px] text-neutral-400 px-1.5 py-0.5 bg-neutral-900 border border-neutral-800">
+                        {srv.originalCurrency} {srv.originalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} @ GH₵{srv.exchangeRate?.toFixed(2)} ({srv.rateType})
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-neutral-400 italic">Custom Quote / Scoping</span>
+                )}
+              </div>
+
               <div className="pt-2 flex flex-wrap gap-2">
                 {srv.deliverables?.slice(0, 4).map((d, idx) => (
                   <span
@@ -164,7 +283,7 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
             <div className="flex items-center gap-3 self-end lg:self-center shrink-0">
               <button
                 onClick={() => handleOpenEdit(srv)}
-                className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-mono uppercase tracking-wider border border-neutral-800 flex items-center gap-1.5"
+                className="px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-mono uppercase tracking-wider border border-neutral-800 flex items-center gap-1.5 cursor-pointer"
               >
                 <Edit2 className="w-3.5 h-3.5" />
                 <span>Edit</span>
@@ -176,7 +295,7 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
                     await onDeleteService(srv.id);
                   }
                 }}
-                className="p-1.5 text-neutral-500 hover:text-red-400"
+                className="p-1.5 text-neutral-500 hover:text-red-400 cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -231,6 +350,137 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Pricing & Multi-Currency Section */}
+              <div className="p-4 bg-neutral-900/40 border border-neutral-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-white flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Pricing & Currency Scoping</span>
+                  </label>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode('custom')}
+                      className={`px-2 py-0.5 text-[10px] uppercase tracking-wider ${
+                        pricingMode === 'custom'
+                          ? 'bg-white text-black font-bold'
+                          : 'text-neutral-400 bg-neutral-900 border border-neutral-800'
+                      }`}
+                    >
+                      Custom Scoping
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode('fixed')}
+                      className={`px-2 py-0.5 text-[10px] uppercase tracking-wider ${
+                        pricingMode === 'fixed'
+                          ? 'bg-white text-black font-bold'
+                          : 'text-neutral-400 bg-neutral-900 border border-neutral-800'
+                      }`}
+                    >
+                      Set Starting Rate
+                    </button>
+                  </div>
+                </div>
+
+                {pricingMode === 'fixed' && (
+                  <div className="space-y-3 pt-2 border-t border-neutral-800">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 uppercase">Input Currency</label>
+                        <select
+                          value={inputCurrency}
+                          onChange={e => setInputCurrency(e.target.value)}
+                          className="w-full bg-neutral-900 border border-neutral-800 p-2 text-white"
+                        >
+                          {SUPPORTED_CURRENCIES.map(c => (
+                            <option key={c.code} value={c.code}>
+                              {c.flag} {c.code} ({c.symbol})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-neutral-400 uppercase">
+                          Amount ({getCurrencyConfig(inputCurrency).symbol})
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={inputPrice}
+                          onChange={e => setInputPrice(e.target.value)}
+                          placeholder="e.g. 500"
+                          className="w-full bg-neutral-900 border border-neutral-800 p-2 text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Conversion info / Manual Rate Override */}
+                    {inputCurrency !== 'GHS' && (
+                      <div className="space-y-2 pt-2 border-t border-neutral-800/60">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-neutral-400">
+                            Rate source: {useManualRate ? 'Manual Override' : 'Live Provider'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setUseManualRate(!useManualRate)}
+                            className="text-amber-400 hover:underline"
+                          >
+                            {useManualRate ? 'Switch to Live Rate' : 'Enter Manual Rate'}
+                          </button>
+                        </div>
+
+                        {useManualRate && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-amber-400 uppercase">
+                              Manual Rate (1 {inputCurrency} = ? GH₵)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.0001"
+                              value={manualRate}
+                              onChange={e => setManualRate(e.target.value)}
+                              placeholder="15.20"
+                              className="w-full bg-neutral-900 border border-amber-800/60 p-2 text-white"
+                            />
+                          </div>
+                        )}
+
+                        {conversionError && (
+                          <div className="p-2 bg-amber-950/40 border border-amber-800 text-amber-300 text-[10px]">
+                            {conversionError}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Calculated Canonical GH₵ Display */}
+                    {calculatedGHS !== null && (
+                      <div className="p-3 bg-neutral-950 border border-emerald-900/60 flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] text-neutral-400 uppercase block">Canonical Business Price</span>
+                          <span className="text-sm font-bold text-emerald-400 font-mono">
+                            {formatGHS(calculatedGHS)}
+                          </span>
+                        </div>
+                        {inputCurrency !== 'GHS' && (
+                          <span className="text-[10px] font-mono text-neutral-400 text-right">
+                            Exchange Rate: 1 {inputCurrency} = GH₵{usedRate.toFixed(2)}
+                            <span className="block text-[9px] text-neutral-500">
+                              ({rateType === 'manual' ? 'Manual exchange rate' : 'Live mid-market'})
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -294,14 +544,14 @@ export const AdminServices: React.FC<AdminServicesProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800 uppercase"
+                  className="px-4 py-2 bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800 uppercase cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-5 py-2 bg-white text-black font-bold uppercase tracking-wider"
+                  className="px-5 py-2 bg-white text-black font-bold uppercase tracking-wider cursor-pointer"
                 >
                   Save Service
                 </button>

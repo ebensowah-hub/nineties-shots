@@ -16,7 +16,8 @@ import {
   SiteConfig,
   InquiryStatus,
   BookingStatus,
-  PaymentStatus
+  PaymentStatus,
+  CurrencyConversionRecord
 } from '../types';
 import { portfolioItems as defaultPortfolioItems, heroImage as defaultHero, photographerPortrait as defaultPortrait } from '../data/portfolioData';
 import { servicesData as defaultServices } from '../data/servicesData';
@@ -59,6 +60,7 @@ export interface DatabaseSchema {
   };
   analyticsEvents: AnalyticsEvent[];
   auditLogs: AuditLog[];
+  conversionHistory: CurrencyConversionRecord[];
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -135,7 +137,8 @@ function getInitialData(): DatabaseSchema {
         details: 'Initial NINETIES SHOTS production database loaded',
         timestamp: new Date().toISOString()
       }
-    ]
+    ],
+    conversionHistory: []
   };
 }
 
@@ -154,7 +157,8 @@ class Database {
         return {
           ...getInitialData(),
           ...parsed,
-          settings: { ...getInitialData().settings, ...(parsed.settings || {}) }
+          settings: { ...getInitialData().settings, ...(parsed.settings || {}) },
+          conversionHistory: Array.isArray(parsed.conversionHistory) ? parsed.conversionHistory : []
         };
       } catch (err) {
         console.error('Error loading database file, initializing fresh:', err);
@@ -411,6 +415,11 @@ class Database {
       time: data.time || '10:00 AM',
       location: data.location || 'Studio',
       quoteAmount: quote,
+      originalAmount: data.originalAmount !== undefined ? Number(data.originalAmount) : (data.originalCurrency && data.originalCurrency !== 'GHS' ? Number(data.originalAmount) : undefined),
+      originalCurrency: data.originalCurrency ? String(data.originalCurrency).toUpperCase() : undefined,
+      exchangeRate: data.exchangeRate !== undefined ? Number(data.exchangeRate) : undefined,
+      rateType: data.rateType || (data.exchangeRate ? 'live' : undefined),
+      convertedAt: data.convertedAt || (data.originalCurrency && data.originalCurrency !== 'GHS' ? new Date().toISOString() : undefined),
       depositAmount: deposit,
       additionalPayment: additional,
       finalPayment: finalP,
@@ -795,6 +804,52 @@ class Database {
       totalClients,
       publishedPortfolioCount
     };
+  }
+
+  // ==================== CURRENCY CONVERSION HISTORY ====================
+  public addConversionRecord(
+    record: Omit<CurrencyConversionRecord, 'id'>,
+    adminUsername: string
+  ): CurrencyConversionRecord {
+    const item: CurrencyConversionRecord = {
+      id: `conv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      ...record
+    };
+
+    if (!Array.isArray(this.data.conversionHistory)) {
+      this.data.conversionHistory = [];
+    }
+
+    this.data.conversionHistory.unshift(item);
+    // Keep last 100 conversions
+    if (this.data.conversionHistory.length > 100) {
+      this.data.conversionHistory = this.data.conversionHistory.slice(0, 100);
+    }
+
+    this.addAuditLog(
+      'Currency Converted',
+      adminUsername,
+      'settings',
+      item.id,
+      `Converted ${record.originalCurrency} ${record.originalAmount} -> GHS ${record.convertedAmount} (Rate: 1 ${record.originalCurrency} = GH₵${record.exchangeRate}, Type: ${record.rateType})`
+    );
+
+    this.save();
+    return item;
+  }
+
+  public getConversionHistory(limit: number = 50): CurrencyConversionRecord[] {
+    if (!Array.isArray(this.data.conversionHistory)) {
+      return [];
+    }
+    return this.data.conversionHistory.slice(0, limit);
+  }
+
+  public clearConversionHistory(adminUsername: string): boolean {
+    this.data.conversionHistory = [];
+    this.addAuditLog('Conversion History Cleared', adminUsername, 'settings', undefined, 'Cleared admin currency conversion history');
+    this.save();
+    return true;
   }
 }
 

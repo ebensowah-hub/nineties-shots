@@ -184,7 +184,10 @@ export async function getAdminMe(): Promise<{ user: AdminUser } | null> {
   return res.user ? { user: res.user } : null;
 }
 
-export async function changeAdminPassword(currentPassword: string, newPassword: string): Promise<void> {
+export async function changeAdminPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; message?: string; token?: string; user?: AdminUser }> {
   const res = await fetch('/api/admin/change-password', {
     method: 'POST',
     headers: getAuthHeaders(),
@@ -195,6 +198,12 @@ export async function changeAdminPassword(currentPassword: string, newPassword: 
     const err = await res.json().catch(() => ({ error: 'Failed to update password' }));
     throw new Error(err.error || 'Password update failed');
   }
+
+  const data = await res.json();
+  if (data.token) {
+    setStoredAdminToken(data.token, true);
+  }
+  return data;
 }
 
 // ==================== ADMIN DASHBOARD ====================

@@ -140,14 +140,10 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess, onBackTo
             </button>
           </form>
 
-          {/* Initial credentials hint for convenience */}
+          {/* Security notice */}
           <div className="pt-4 border-t border-neutral-900 text-center">
-            <div className="text-[10px] font-mono text-neutral-500 leading-relaxed">
-              Default system credential:{' '}
-              <span className="text-neutral-300 font-bold">admin</span> /{' '}
-              <span className="text-neutral-300 font-bold">ninetiesshots2026</span>
-              <br />
-              <span className="text-neutral-600">(You can change your password anytime in Settings)</span>
+            <div className="text-[10px] font-mono text-neutral-600 leading-relaxed">
+              Authorized personnel only. All access attempts are recorded in the security audit log.
             </div>
           </div>
         </div>

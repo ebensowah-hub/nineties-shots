@@ -50,7 +50,7 @@ export interface ServiceItem {
   originalAmount?: number;
   originalCurrency?: string;
   exchangeRate?: number;
-  rateType?: 'live' | 'manual';
+  rateType?: 'live' | 'manual' | 'manual-flagged';
   quoteRangeText?: string;
 }
 
@@ -63,7 +63,7 @@ export interface CurrencyConversionRecord {
   exchangeRate: number;
   convertedAmount: number; // in GHS
   convertedCurrency: 'GHS';
-  rateType: 'live' | 'manual';
+  rateType: 'live' | 'manual' | 'manual-flagged';
   provider: string;
   convertedAt: string;
   note?: string;
@@ -178,13 +178,14 @@ export interface Booking {
   originalAmount?: number; // Original quote in source currency (e.g. 500)
   originalCurrency?: string; // Source currency code (e.g. 'USD')
   exchangeRate?: number; // Conversion rate used (e.g. 15.20)
-  rateType?: 'live' | 'manual'; // Live or manual rate override
+  rateType?: 'live' | 'manual' | 'manual-flagged'; // Live or manual rate override
   convertedAt?: string; // Timestamp of conversion
   depositAmount: number; // In GHS
   additionalPayment: number; // In GHS
   finalPayment: number; // In GHS
   refundAmount: number; // In GHS
   totalPaid: number; // In GHS
+  flaggedOverpayment?: boolean;
   paymentStatus: PaymentStatus;
   bookingStatus: BookingStatus;
   notes: string;
@@ -213,6 +214,7 @@ export interface AdminUser {
   username: string;
   name: string;
   role: 'owner' | 'admin';
+  mustChangePassword?: boolean;
   createdAt: string;
   lastLoginAt?: string;
 }

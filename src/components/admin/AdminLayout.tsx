@@ -50,6 +50,7 @@ import { AdminServices } from './AdminServices';
 import { AdminAnalytics } from './AdminAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { AdminAuditLog } from './AdminAuditLog';
+import { MustChangePasswordModal } from './MustChangePasswordModal';
 import { Loader2, RefreshCw, Eye, Menu } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -59,6 +60,7 @@ interface AdminLayoutProps {
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onViewPublicSite }) => {
+  const [currentUser, setCurrentUser] = useState<AdminUser>(user);
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -420,6 +422,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
                 <AdminAuditLog logs={auditLogs} />
               )}
             </>
+          )}
+
+          {currentUser.mustChangePassword && (
+            <MustChangePasswordModal
+              user={currentUser}
+              onPasswordChanged={updatedUser => setCurrentUser(updatedUser)}
+            />
           )}
         </div>
       </main>

@@ -10,6 +10,13 @@ import {
   calculateGHSConversion,
   SUPPORTED_CURRENCIES
 } from './src/server/currencyService';
+import {
+  checkLoginRateLimit,
+  recordFailedLogin,
+  clearLoginAttempts,
+  validateFinancialFields,
+  checkRateDeviation
+} from './src/server/validation';
 
 interface AuthenticatedRequest extends Request {
   adminUser?: AdminUser;
@@ -176,16 +183,33 @@ async function startServer() {
   app.post('/api/admin/login', (req, res) => {
     try {
       const { username, password } = req.body;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+
       if (!username || !password) {
         res.status(400).json({ error: 'Username and password are required' });
         return;
       }
 
+      // Step 2: Rate limit check (5 attempts per 15 minutes per IP + username)
+      const rateLimit = checkLoginRateLimit(clientIp, String(username));
+      if (!rateLimit.allowed) {
+        res.status(429).json({
+          error: 'Too many login attempts. Please try again after 15 minutes.',
+          retryAfterSeconds: rateLimit.retryAfterSeconds
+        });
+        return;
+      }
+
       const auth = db.authenticateAdmin(String(username), String(password));
       if (!auth) {
+        // Record failed attempt
+        recordFailedLogin(clientIp, String(username));
         res.status(401).json({ error: 'Invalid username or password' });
         return;
       }
+
+      // Successful login - clear failed attempts
+      clearLoginAttempts(clientIp, String(username));
 
       res.json({
         success: true,
@@ -230,19 +254,24 @@ async function startServer() {
         return;
       }
 
-      const success = db.updateAdminPassword(
+      const result = db.updateAdminPassword(
         req.adminUser!.id,
         String(currentPassword),
         String(newPassword),
         req.adminUser!.username
       );
 
-      if (!success) {
-        res.status(400).json({ error: 'Current password is incorrect' });
+      if (!result.success) {
+        res.status(400).json({ error: result.error || 'Failed to change password' });
         return;
       }
 
-      res.json({ success: true, message: 'Password updated successfully' });
+      res.json({
+        success: true,
+        message: 'Password updated successfully',
+        token: result.newToken,
+        user: result.user
+      });
     } catch (err) {
       res.status(500).json({ error: 'Failed to update password' });
     }
@@ -307,6 +336,16 @@ async function startServer() {
         return;
       }
 
+      // Financial validation
+      const finValidation = validateFinancialFields(req.body);
+      if (!finValidation.valid) {
+        res.status(400).json({
+          error: 'Validation failed: Invalid financial values',
+          details: finValidation.errors
+        });
+        return;
+      }
+
       const booking = db.createBooking({
         inquiryId: inquiry.id,
         clientName: inquiry.clientName,
@@ -315,8 +354,13 @@ async function startServer() {
         serviceTitle: inquiry.shootType,
         date: inquiry.preferredDate || new Date().toISOString().split('T')[0],
         location: inquiry.location || 'Studio',
-        quoteAmount: Number(req.body.quoteAmount || 0),
-        depositAmount: Number(req.body.depositAmount || 0),
+        quoteAmount: finValidation.sanitized.quoteAmount,
+        depositAmount: finValidation.sanitized.depositAmount,
+        additionalPayment: finValidation.sanitized.additionalPayment,
+        finalPayment: finValidation.sanitized.finalPayment,
+        refundAmount: finValidation.sanitized.refundAmount,
+        originalAmount: finValidation.sanitized.originalAmount,
+        exchangeRate: finValidation.sanitized.exchangeRate,
         bookingStatus: 'Confirmed',
         notes: req.body.notes || `Converted from inquiry ${inquiry.reference}. Message: ${inquiry.message}`
       }, req.adminUser!.username);
@@ -346,7 +390,22 @@ async function startServer() {
 
   app.post('/api/admin/bookings', requireAdminAuth, (req: AuthenticatedRequest, res) => {
     try {
-      const booking = db.createBooking(req.body, req.adminUser!.username);
+      // Financial validation
+      const finValidation = validateFinancialFields(req.body);
+      if (!finValidation.valid) {
+        res.status(400).json({
+          error: 'Validation failed: Invalid financial values',
+          details: finValidation.errors
+        });
+        return;
+      }
+
+      const payload = {
+        ...req.body,
+        ...finValidation.sanitized
+      };
+
+      const booking = db.createBooking(payload, req.adminUser!.username);
       res.status(201).json(booking);
     } catch (err) {
       res.status(500).json({ error: 'Failed to create booking' });
@@ -364,7 +423,38 @@ async function startServer() {
 
   app.patch('/api/admin/bookings/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateBooking(req.params.id, req.body, req.adminUser!.username);
+      const existing = db.getBookingById(req.params.id);
+      if (!existing) {
+        res.status(404).json({ error: 'Booking not found' });
+        return;
+      }
+
+      // Merge current and updated fields for holistic financial integrity check
+      const mergedFinance = {
+        quoteAmount: req.body.quoteAmount !== undefined ? req.body.quoteAmount : existing.quoteAmount,
+        depositAmount: req.body.depositAmount !== undefined ? req.body.depositAmount : existing.depositAmount,
+        additionalPayment: req.body.additionalPayment !== undefined ? req.body.additionalPayment : existing.additionalPayment,
+        finalPayment: req.body.finalPayment !== undefined ? req.body.finalPayment : existing.finalPayment,
+        refundAmount: req.body.refundAmount !== undefined ? req.body.refundAmount : existing.refundAmount,
+        originalAmount: req.body.originalAmount !== undefined ? req.body.originalAmount : existing.originalAmount,
+        exchangeRate: req.body.exchangeRate !== undefined ? req.body.exchangeRate : existing.exchangeRate
+      };
+
+      const finValidation = validateFinancialFields(mergedFinance);
+      if (!finValidation.valid) {
+        res.status(400).json({
+          error: 'Validation failed: Invalid financial values',
+          details: finValidation.errors
+        });
+        return;
+      }
+
+      const updates = {
+        ...req.body,
+        ...finValidation.sanitized
+      };
+
+      const updated = db.updateBooking(req.params.id, updates, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Booking not found' });
         return;
@@ -570,9 +660,10 @@ async function startServer() {
       }
 
       let rate = 1.0;
-      let rateType: 'live' | 'manual' = 'live';
+      let rateType: 'live' | 'manual' | 'manual-flagged' = 'live';
       let provider = 'Bank of Ghana (Parity)';
       let convertedAt = new Date().toISOString();
+      let deviationWarning: string | undefined = undefined;
 
       if (currencyCode === 'GHS') {
         rate = 1.0;
@@ -583,6 +674,20 @@ async function startServer() {
         rate = Number(manualRate);
         rateType = 'manual';
         provider = 'Manual Admin Override';
+
+        // Step 5: Check deviation against live market reference rate
+        try {
+          const liveInfo = await getLiveRateToGHS(currencyCode);
+          if (liveInfo.success && liveInfo.rate && liveInfo.rate > 0) {
+            const deviationCheck = checkRateDeviation(rate, liveInfo.rate);
+            if (deviationCheck.isFlagged) {
+              rateType = 'manual-flagged';
+              deviationWarning = deviationCheck.warning;
+            }
+          }
+        } catch {
+          // Graceful fallback if live provider unavailable
+        }
       } else {
         // Live rate request from external provider
         const liveInfo = await getLiveRateToGHS(currencyCode);
@@ -606,6 +711,11 @@ async function startServer() {
       // Calculate precise conversion in integer pesewas
       const { ghsAmount } = calculateGHSConversion(numAmount, rate);
 
+      const combinedNote = [
+        note ? String(note).slice(0, 200) : '',
+        deviationWarning ? `[WARNING: ${deviationWarning}]` : ''
+      ].filter(Boolean).join(' ') || undefined;
+
       // Save conversion history record
       const record = db.addConversionRecord(
         {
@@ -617,7 +727,7 @@ async function startServer() {
           rateType,
           provider,
           convertedAt,
-          note: note ? String(note).slice(0, 200) : undefined
+          note: combinedNote
         },
         req.adminUser!.username
       );
@@ -626,7 +736,9 @@ async function startServer() {
         success: true,
         conversion: record,
         formattedOriginal: `${currencyCode} ${numAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        formattedGHS: `GH₵${ghsAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        formattedGHS: `GH₵${ghsAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        flagged: rateType === 'manual-flagged',
+        warning: deviationWarning
       });
     } catch (err: any) {
       console.error('Error converting currency:', err);

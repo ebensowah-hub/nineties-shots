@@ -556,12 +556,18 @@ export const CurrencyConverterTool: React.FC<CurrencyConverterToolProps> = ({
                     <td className="py-3 px-3">
                       <span
                         className={`text-[9px] uppercase px-2 py-0.5 border ${
-                          item.rateType === 'manual'
+                          item.rateType === 'manual-flagged'
+                            ? 'bg-red-950/50 border-red-800 text-red-300'
+                            : item.rateType === 'manual'
                             ? 'bg-amber-950/50 border-amber-800 text-amber-300'
                             : 'bg-emerald-950/50 border-emerald-800 text-emerald-300'
                         }`}
                       >
-                        {item.rateType === 'manual' ? 'Manual' : 'Live'}
+                        {item.rateType === 'manual-flagged'
+                          ? 'Flagged (>20% Dev)'
+                          : item.rateType === 'manual'
+                          ? 'Manual'
+                          : 'Live'}
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right">

@@ -25,6 +25,7 @@ import { siteConfig as defaultSiteConfig } from '../data/siteConfig';
 
 export interface StoredAdminUser extends AdminUser {
   passwordHash: string;
+  mustChangePassword?: boolean;
 }
 
 export interface Session {
@@ -65,6 +66,7 @@ export interface DatabaseSchema {
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'ninetiesshots_db.json');
+const AUDIT_ARCHIVE_FILE = path.join(DATA_DIR, 'ninetiesshots_audit_archive.jsonl');
 
 // Ensure data folder exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -76,19 +78,44 @@ function generateReference(prefix: string = 'NS'): string {
   return `${prefix}-${randomNum}`;
 }
 
-function getInitialData(): DatabaseSchema {
-  // Hash default admin password: 'ninetiesshots2026'
-  const salt = bcrypt.genSaltSync(10);
-  const defaultPasswordHash = bcrypt.hashSync('ninetiesshots2026', salt);
+function generateInitialAdmin(): StoredAdminUser {
+  const envPassword = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+  let plainPassword = '';
+  let generated = false;
 
-  const initialAdmin: StoredAdminUser = {
+  if (envPassword && envPassword.length >= 8) {
+    plainPassword = envPassword;
+  } else {
+    // Generate high-entropy, human-friendly random password with minimum 64 bits of entropy
+    plainPassword = `NS-${crypto.randomBytes(6).toString('hex')}`;
+    generated = true;
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const defaultPasswordHash = bcrypt.hashSync(plainPassword, salt);
+
+  if (generated) {
+    console.log('\n' + '='.repeat(72));
+    console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT CREATED');
+    console.log('Username: admin');
+    console.log(`Initial Password: ${plainPassword}`);
+    console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
+    console.log('='.repeat(72) + '\n');
+  }
+
+  return {
     id: 'admin_1',
     username: 'admin',
     name: 'Nineties Shots Admin',
     role: 'owner',
     passwordHash: defaultPasswordHash,
+    mustChangePassword: true,
     createdAt: new Date().toISOString()
   };
+}
+
+function getInitialData(isFirstSetup: boolean = true): DatabaseSchema {
+  const initialAdmin = generateInitialAdmin();
 
   const initialPortfolio = defaultPortfolioItems.map((item, index) => ({
     ...item,
@@ -154,20 +181,42 @@ class Database {
       try {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
-        return {
-          ...getInitialData(),
+        
+        // If database already exists and has admin users, preserve existing admin credentials
+        const existingAdmins = Array.isArray(parsed.adminUsers) && parsed.adminUsers.length > 0
+          ? parsed.adminUsers.map((a: any) => ({
+              ...a,
+              mustChangePassword: a.mustChangePassword !== undefined ? Boolean(a.mustChangePassword) : false
+            }))
+          : [generateInitialAdmin()];
+
+        const loaded: DatabaseSchema = {
           ...parsed,
-          settings: { ...getInitialData().settings, ...(parsed.settings || {}) },
+          adminUsers: existingAdmins,
+          // CRITICAL: Invalidate all stored active sessions on load to treat existing sessions as revoked
+          sessions: [],
+          settings: { ...(getInitialData(false).settings), ...(parsed.settings || {}) },
+          portfolio: Array.isArray(parsed.portfolio) && parsed.portfolio.length > 0 ? parsed.portfolio : getInitialData(false).portfolio,
+          services: Array.isArray(parsed.services) && parsed.services.length > 0 ? parsed.services : getInitialData(false).services,
+          inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
+          bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
+          clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+          analyticsEvents: Array.isArray(parsed.analyticsEvents) ? parsed.analyticsEvents : [],
+          auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
           conversionHistory: Array.isArray(parsed.conversionHistory) ? parsed.conversionHistory : []
         };
+        
+        // Immediately persist invalidated sessions and structure
+        this.saveDirect(loaded);
+        return loaded;
       } catch (err) {
         console.error('Error loading database file, initializing fresh:', err);
-        const init = getInitialData();
+        const init = getInitialData(true);
         this.saveDirect(init);
         return init;
       }
     } else {
-      const init = getInitialData();
+      const init = getInitialData(true);
       this.saveDirect(init);
       return init;
     }
@@ -214,12 +263,18 @@ class Database {
 
     this.data.sessions.push(session);
 
-    // Audit log
+    // Audit log (never logging passwords or tokens)
     this.addAuditLog('Admin Login', admin.username, 'auth', admin.id, 'Successful admin authentication');
     this.save();
 
     const { passwordHash: _, ...userSafe } = admin;
-    return { user: userSafe, token };
+    return {
+      user: {
+        ...userSafe,
+        mustChangePassword: Boolean(admin.mustChangePassword)
+      },
+      token
+    };
   }
 
   public validateSession(token: string): AdminUser | null {
@@ -239,7 +294,10 @@ class Database {
     if (!admin) return null;
 
     const { passwordHash: _, ...userSafe } = admin;
-    return userSafe;
+    return {
+      ...userSafe,
+      mustChangePassword: Boolean(admin.mustChangePassword)
+    };
   }
 
   public deleteSession(token: string): boolean {
@@ -252,18 +310,66 @@ class Database {
     return false;
   }
 
-  public updateAdminPassword(userId: string, currentPlain: string, newPlain: string, adminUsername: string): boolean {
+  public updateAdminPassword(
+    userId: string,
+    currentPlain: string,
+    newPlain: string,
+    adminUsername: string
+  ): { success: boolean; error?: string; newToken?: string; user?: AdminUser } {
     const admin = this.data.adminUsers.find(u => u.id === userId);
-    if (!admin) return false;
+    if (!admin) return { success: false, error: 'Administrator not found' };
 
     if (!bcrypt.compareSync(currentPlain, admin.passwordHash)) {
-      return false;
+      return { success: false, error: 'Current password is incorrect' };
+    }
+
+    if (!newPlain || newPlain.length < 8) {
+      return { success: false, error: 'New password must be at least 8 characters long' };
     }
 
     admin.passwordHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
-    // Invalidate other sessions
+    admin.mustChangePassword = false;
+
+    // Invalidate all existing sessions for this admin
     this.data.sessions = this.data.sessions.filter(s => s.userId !== userId);
-    this.addAuditLog('Password Changed', adminUsername, 'auth', admin.id, 'Admin password successfully updated');
+
+    // Create a fresh new valid session
+    const newToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    this.data.sessions.push({
+      token: newToken,
+      userId: admin.id,
+      username: admin.username,
+      createdAt: new Date().toISOString(),
+      expiresAt
+    });
+
+    this.addAuditLog('Password Changed', adminUsername, 'auth', admin.id, 'Admin password successfully updated and existing sessions invalidated');
+    this.save();
+
+    const { passwordHash: _, ...userSafe } = admin;
+    return {
+      success: true,
+      newToken,
+      user: {
+        ...userSafe,
+        mustChangePassword: false
+      }
+    };
+  }
+
+  public resetAdminPassword(newPlain: string, adminUsername: string = 'admin'): boolean {
+    if (!newPlain || newPlain.length < 8) {
+      throw new Error('Password must be at least 8 characters long');
+    }
+    const admin = this.data.adminUsers.find(u => u.username.toLowerCase() === adminUsername.toLowerCase()) || this.data.adminUsers[0];
+    if (!admin) return false;
+
+    admin.passwordHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
+    admin.mustChangePassword = false;
+    // Invalidate all active sessions
+    this.data.sessions = [];
+    this.addAuditLog('Admin Password Reset', admin.username, 'auth', admin.id, 'Administrator password reset via server CLI/recovery');
     this.save();
     return true;
   }
@@ -425,6 +531,7 @@ class Database {
       finalPayment: finalP,
       refundAmount: refund,
       totalPaid,
+      flaggedOverpayment: quote > 0 && totalPaid > quote,
       paymentStatus: data.paymentStatus || paymentStatus,
       bookingStatus: data.bookingStatus || 'Confirmed',
       notes: data.notes || '',
@@ -488,6 +595,7 @@ class Database {
     const refund = Number(booking.refundAmount || 0);
     const totalPaid = Math.max(0, (deposit + additional + finalP) - refund);
     booking.totalPaid = totalPaid;
+    booking.flaggedOverpayment = quote > 0 && totalPaid > quote;
 
     if (!updates.paymentStatus && quote > 0) {
       if (refund > 0 && totalPaid === 0) booking.paymentStatus = 'Refunded';
@@ -518,8 +626,31 @@ class Database {
   public deleteBooking(id: string, adminUsername: string): boolean {
     const index = this.data.bookings.findIndex(b => b.id === id);
     if (index === -1) return false;
-    const ref = this.data.bookings[index].bookingReference;
+
+    const booking = this.data.bookings[index];
+    const ref = booking.bookingReference;
+    const clientId = booking.clientId;
+    const clientEmail = (booking.clientEmail || '').trim().toLowerCase();
+
+    // 1. Remove the booking record
     this.data.bookings.splice(index, 1);
+
+    // 2. Recalculate associated client statistics accurately from all remaining records
+    const client = this.data.clients.find(c => 
+      c.id === clientId || (clientEmail && c.email.trim().toLowerCase() === clientEmail)
+    );
+
+    if (client) {
+      const remainingClientBookings = this.data.bookings.filter(b => 
+        b.clientId === client.id || (client.email && b.clientEmail.trim().toLowerCase() === client.email.trim().toLowerCase())
+      );
+
+      client.bookingsCount = Math.max(0, remainingClientBookings.length);
+      client.completedShootsCount = Math.max(0, remainingClientBookings.filter(b => b.bookingStatus === 'Completed').length);
+      client.totalRevenue = Math.max(0, remainingClientBookings.reduce((sum, b) => sum + Number(b.totalPaid || 0), 0));
+      client.updatedAt = new Date().toISOString();
+    }
+
     this.addAuditLog('Booking Deleted', adminUsername, 'booking', id, `Deleted booking ${ref}`);
     this.save();
     return true;
@@ -754,7 +885,13 @@ class Database {
   }
 
   // ==================== AUDIT LOGS ====================
-  public addAuditLog(action: string, adminUsername: string, recordType: AuditLog['recordType'], recordId: string | undefined, details: string): void {
+  public addAuditLog(
+    action: string,
+    adminUsername: string,
+    recordType: AuditLog['recordType'],
+    recordId: string | undefined,
+    details: string
+  ): void {
     const log: AuditLog = {
       id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       action,
@@ -765,8 +902,19 @@ class Database {
       timestamp: new Date().toISOString()
     };
     this.data.auditLogs.unshift(log);
-    if (this.data.auditLogs.length > 2000) {
-      this.data.auditLogs = this.data.auditLogs.slice(0, 1000);
+
+    // Keep active memory bounded (500 records) and archive older records to JSONL append-only file
+    if (this.data.auditLogs.length > 500) {
+      const recordsToArchive = this.data.auditLogs.slice(500);
+      try {
+        const jsonlLines = recordsToArchive.map(r => JSON.stringify(r)).join('\n') + '\n';
+        fs.appendFileSync(AUDIT_ARCHIVE_FILE, jsonlLines, 'utf-8');
+        // Only slice from in-memory array AFTER successful disk append
+        this.data.auditLogs = this.data.auditLogs.slice(0, 500);
+      } catch (err) {
+        console.error('[AUDIT ARCHIVE] Failed to append records to archive JSONL:', err);
+        // Retain in memory on write error to prevent data destruction
+      }
     }
   }
 

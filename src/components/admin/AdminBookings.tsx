@@ -722,8 +722,23 @@ export const AdminBookings: React.FC<AdminBookingsProps> = ({
                     </div>
                     <div className="text-right text-[10px] text-neutral-400">
                       <span>Rate Used: 1 {selectedBooking.originalCurrency} = GH₵{selectedBooking.exchangeRate?.toFixed(2)}</span>
-                      <span className="block text-[9px] text-neutral-500">({selectedBooking.rateType || 'live'})</span>
+                      <span className="block text-[9px] text-neutral-500">
+                        ({selectedBooking.rateType || 'live'})
+                        {selectedBooking.rateType === 'manual-flagged' && (
+                          <span className="text-amber-400 font-bold ml-1">⚠️ Flagged Deviation</span>
+                        )}
+                      </span>
                     </div>
+                  </div>
+                )}
+
+                {/* Overpayment Warning */}
+                {((editDeposit + editAdditional + editFinal - editRefund) > editQuoteGHS && editQuoteGHS > 0) && (
+                  <div className="p-3 bg-amber-950/40 border border-amber-800/80 text-amber-300 text-xs font-mono flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span>
+                      Notice: Total payments received ({formatGHS((editDeposit + editAdditional + editFinal) - editRefund)}) exceed the quote ({formatGHS(editQuoteGHS)}) by {formatGHS(((editDeposit + editAdditional + editFinal) - editRefund) - editQuoteGHS)}.
+                    </span>
                   </div>
                 )}
 

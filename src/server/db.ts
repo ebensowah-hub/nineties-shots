@@ -70,8 +70,8 @@ export interface DatabaseSchema {
   conversionHistory: CurrencyConversionRecord[];
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'ninetiesshots_db.json');
+const DATA_DIR = process.env.DATA_DIR_PATH || path.join(process.cwd(), 'data');
+const DB_FILE = process.env.DB_FILE_PATH || path.join(DATA_DIR, 'ninetiesshots_db.json');
 const AUDIT_ARCHIVE_FILE = path.join(DATA_DIR, 'ninetiesshots_audit_archive.jsonl');
 
 // Ensure data folder exists safely without throwing on read-only environments
@@ -175,8 +175,8 @@ function generateInitialAdmin(): StoredAdminUser {
     console.log('\n' + '='.repeat(72));
     console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED');
     console.log(`Username: ${envUsername}`);
-    console.log('Notice: Account generated with initial one-time credentials.');
-    console.log('Set ADMIN_RESET_PASSWORD in environment to configure production credentials.');
+    console.log(`Initial Password: ${plainPassword}`);
+    console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
     console.log('='.repeat(72) + '\n');
   }
 
@@ -192,7 +192,7 @@ function generateInitialAdmin(): StoredAdminUser {
 }
 
 function getInitialData(isFirstSetup: boolean = true): DatabaseSchema {
-  const initialAdmin = generateInitialAdmin();
+  const initialAdmin = isFirstSetup ? generateInitialAdmin() : null;
 
   const initialPortfolio = defaultPortfolioItems.map((item, index) => ({
     ...item,
@@ -209,7 +209,7 @@ function getInitialData(isFirstSetup: boolean = true): DatabaseSchema {
   }));
 
   return {
-    adminUsers: [initialAdmin],
+    adminUsers: initialAdmin ? [initialAdmin] : [],
     sessions: [],
     inquiries: [],
     bookings: [],

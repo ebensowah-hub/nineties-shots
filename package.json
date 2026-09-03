@@ -9,6 +9,7 @@
     "start": "node dist/server.cjs",
     "reset-admin": "tsx scripts/reset-admin-password.ts",
     "check:prod": "tsx scripts/preflight-check.ts",
+    "predeploy": "npm run build && npm run check:prod",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"

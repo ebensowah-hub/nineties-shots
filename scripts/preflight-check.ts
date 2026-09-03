@@ -96,7 +96,8 @@ async function runPreflight() {
     env: {
       ...process.env,
       PORT: String(TEST_PORT),
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD || 'PreflightAdminTest2026!'
     }
   });
 

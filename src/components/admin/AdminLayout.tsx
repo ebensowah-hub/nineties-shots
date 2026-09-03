@@ -47,6 +47,7 @@ import { AdminCalendar } from './AdminCalendar';
 import { AdminClients } from './AdminClients';
 import { AdminPortfolio } from './AdminPortfolio';
 import { AdminServices } from './AdminServices';
+import { AdminFinance } from './AdminFinance';
 import { AdminAnalytics } from './AdminAnalytics';
 import { AdminSettings } from './AdminSettings';
 import { AdminAuditLog } from './AdminAuditLog';
@@ -401,6 +402,13 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
                   onAddService={handleAddService}
                   onUpdateService={handleUpdateService}
                   onDeleteService={handleDeleteService}
+                />
+              )}
+
+              {activeTab === 'finance' && (
+                <AdminFinance
+                  bookings={bookings}
+                  onRefreshAll={loadAllData}
                 />
               )}
 

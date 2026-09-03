@@ -17,7 +17,12 @@ import {
   InquiryStatus,
   BookingStatus,
   PaymentStatus,
-  CurrencyConversionRecord
+  CurrencyConversionRecord,
+  Expense,
+  ExpenseCategory,
+  FinanceOverviewStats,
+  FinancialTransaction,
+  FinanceAnalyticsData
 } from '../types';
 import { portfolioItems as defaultPortfolioItems, heroImage as defaultHero, photographerPortrait as defaultPortrait } from '../data/portfolioData';
 import { servicesData as defaultServices } from '../data/servicesData';
@@ -42,6 +47,7 @@ export interface DatabaseSchema {
   inquiries: Inquiry[];
   bookings: Booking[];
   clients: Client[];
+  expenses: Expense[];
   portfolio: (PortfolioItem & { isHero?: boolean; isPublished: boolean; order: number })[];
   services: (ServiceItem & { isEnabled: boolean; order: number; quoteRangeText?: string })[];
   settings: {
@@ -68,9 +74,13 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'ninetiesshots_db.json');
 const AUDIT_ARCHIVE_FILE = path.join(DATA_DIR, 'ninetiesshots_audit_archive.jsonl');
 
-// Ensure data folder exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure data folder exists safely without throwing on read-only environments
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn('[DB] Warning: Could not create data directory:', err);
 }
 
 function generateReference(prefix: string = 'NS'): string {
@@ -78,8 +88,75 @@ function generateReference(prefix: string = 'NS'): string {
   return `${prefix}-${randomNum}`;
 }
 
+export function resolveDateFilter(
+  timeRange: string = 'all',
+  customStart?: string,
+  customEnd?: string
+): { startDate?: string; endDate?: string } {
+  if (timeRange === 'all') {
+    return {};
+  }
+
+  const now = new Date();
+  const formatYMD = (d: Date): string => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  if (timeRange === 'today') {
+    const today = formatYMD(now);
+    return { startDate: today, endDate: today };
+  }
+
+  if (timeRange === 'this_week') {
+    const day = now.getDay();
+    const diffToMonday = (day + 6) % 7;
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+    const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    return { startDate: formatYMD(monday), endDate: formatYMD(sunday) };
+  }
+
+  if (timeRange === 'this_month') {
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { startDate: formatYMD(startOfMonth), endDate: formatYMD(endOfMonth) };
+  }
+
+  if (timeRange === 'last_3_months') {
+    const start3m = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { startDate: formatYMD(start3m), endDate: formatYMD(endOfMonth) };
+  }
+
+  if (timeRange === 'this_year') {
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const endOfYear = new Date(now.getFullYear(), 11, 31);
+    return { startDate: formatYMD(startOfYear), endDate: formatYMD(endOfYear) };
+  }
+
+  if (timeRange === 'custom') {
+    return {
+      startDate: customStart || undefined,
+      endDate: customEnd || undefined
+    };
+  }
+
+  return {};
+}
+
+export function isDateInRange(dateStr: string, startDate?: string, endDate?: string): boolean {
+  if (!dateStr) return !startDate && !endDate;
+  const dateOnly = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  if (startDate && dateOnly < startDate) return false;
+  if (endDate && dateOnly > endDate) return false;
+  return true;
+}
+
 function generateInitialAdmin(): StoredAdminUser {
-  const envPassword = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+  const envPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
+  const envUsername = process.env.ADMIN_USERNAME?.trim() || 'admin';
   let plainPassword = '';
   let generated = false;
 
@@ -96,16 +173,16 @@ function generateInitialAdmin(): StoredAdminUser {
 
   if (generated) {
     console.log('\n' + '='.repeat(72));
-    console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT CREATED');
-    console.log('Username: admin');
-    console.log(`Initial Password: ${plainPassword}`);
-    console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
+    console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED');
+    console.log(`Username: ${envUsername}`);
+    console.log('Notice: Account generated with initial one-time credentials.');
+    console.log('Set ADMIN_RESET_PASSWORD in environment to configure production credentials.');
     console.log('='.repeat(72) + '\n');
   }
 
   return {
     id: 'admin_1',
-    username: 'admin',
+    username: envUsername,
     name: 'Nineties Shots Admin',
     role: 'owner',
     passwordHash: defaultPasswordHash,
@@ -137,6 +214,7 @@ function getInitialData(isFirstSetup: boolean = true): DatabaseSchema {
     inquiries: [],
     bookings: [],
     clients: [],
+    expenses: [],
     portfolio: initialPortfolio,
     services: initialServices,
     settings: {
@@ -183,12 +261,33 @@ class Database {
         const parsed = JSON.parse(raw);
         
         // If database already exists and has admin users, preserve existing admin credentials
-        const existingAdmins = Array.isArray(parsed.adminUsers) && parsed.adminUsers.length > 0
+        const existingAdmins: StoredAdminUser[] = Array.isArray(parsed.adminUsers) && parsed.adminUsers.length > 0
           ? parsed.adminUsers.map((a: any) => ({
               ...a,
               mustChangePassword: a.mustChangePassword !== undefined ? Boolean(a.mustChangePassword) : false
             }))
           : [generateInitialAdmin()];
+
+        // Secure credential synchronization / reset via environment variable
+        const envResetPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
+        const envAdminUsername = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
+
+        if (envResetPassword && envResetPassword.length >= 8) {
+          let targetAdmin = existingAdmins.find(a => a.username.toLowerCase() === envAdminUsername);
+          if (!targetAdmin && existingAdmins.length > 0) {
+            targetAdmin = existingAdmins[0];
+          }
+
+          if (targetAdmin) {
+            const isMatch = bcrypt.compareSync(envResetPassword, targetAdmin.passwordHash);
+            if (!isMatch) {
+              const salt = bcrypt.genSaltSync(10);
+              targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
+              targetAdmin.mustChangePassword = true;
+              console.log(`[NINETIES SHOTS] Admin password for "${targetAdmin.username}" securely updated via environment configuration.`);
+            }
+          }
+        }
 
         const loaded: DatabaseSchema = {
           ...parsed,
@@ -201,6 +300,7 @@ class Database {
           inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
           bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
           clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+          expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
           analyticsEvents: Array.isArray(parsed.analyticsEvents) ? parsed.analyticsEvents : [],
           auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
           conversionHistory: Array.isArray(parsed.conversionHistory) ? parsed.conversionHistory : []
@@ -228,11 +328,28 @@ class Database {
 
   private saveDirect(data: DatabaseSchema): void {
     try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
       const tempPath = `${DB_FILE}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
       fs.renameSync(tempPath, DB_FILE);
     } catch (err) {
-      console.error('Error writing database file:', err);
+      console.error('[DB] Error writing database file:', err);
+    }
+  }
+
+  public isHealthy(): boolean {
+    try {
+      return Boolean(
+        this.data &&
+        Array.isArray(this.data.adminUsers) &&
+        this.data.adminUsers.length > 0 &&
+        this.data.settings &&
+        typeof this.data.settings.brandName === 'string'
+      );
+    } catch {
+      return false;
     }
   }
 
@@ -308,6 +425,20 @@ class Database {
       return true;
     }
     return false;
+  }
+
+  public revokeAllSessions(userId: string, keepToken?: string): number {
+    const prevCount = this.data.sessions.length;
+    if (keepToken) {
+      this.data.sessions = this.data.sessions.filter(s => s.userId !== userId || s.token === keepToken);
+    } else {
+      this.data.sessions = this.data.sessions.filter(s => s.userId !== userId);
+    }
+    const revoked = prevCount - this.data.sessions.length;
+    if (revoked > 0) {
+      this.save();
+    }
+    return revoked;
   }
 
   public updateAdminPassword(
@@ -998,6 +1129,888 @@ class Database {
     this.addAuditLog('Conversion History Cleared', adminUsername, 'settings', undefined, 'Cleared admin currency conversion history');
     this.save();
     return true;
+  }
+
+  // ==================== EXPENSES & FINANCE TRACKING ====================
+  public getExpenses(filter?: {
+    category?: string;
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    timeRange?: string;
+    paymentMethod?: string;
+  }): Expense[] {
+    let list = Array.isArray(this.data.expenses) ? [...this.data.expenses] : [];
+
+    if (filter) {
+      if (filter.category && filter.category !== 'all') {
+        list = list.filter(e => e.category.toLowerCase() === filter.category!.toLowerCase());
+      }
+      if (filter.paymentMethod && filter.paymentMethod !== 'all') {
+        list = list.filter(e => e.paymentMethod.toLowerCase() === filter.paymentMethod!.toLowerCase());
+      }
+      if (filter.search) {
+        const q = filter.search.toLowerCase().trim();
+        list = list.filter(e =>
+          (e.description && e.description.toLowerCase().includes(q)) ||
+          (e.category && e.category.toLowerCase().includes(q)) ||
+          (e.notes && e.notes.toLowerCase().includes(q)) ||
+          (e.receiptRef && e.receiptRef.toLowerCase().includes(q)) ||
+          (e.paymentMethod && e.paymentMethod.toLowerCase().includes(q))
+        );
+      }
+
+      let filterStart = filter.startDate;
+      let filterEnd = filter.endDate;
+      if (filter.timeRange && !filterStart && !filterEnd) {
+        const resolved = resolveDateFilter(filter.timeRange);
+        filterStart = resolved.startDate;
+        filterEnd = resolved.endDate;
+      }
+
+      if (filterStart || filterEnd) {
+        list = list.filter(e => {
+          const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+          return isDateInRange(eDate, filterStart, filterEnd);
+        });
+      }
+    }
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  public getExpenseById(id: string): Expense | null {
+    if (!Array.isArray(this.data.expenses)) return null;
+    return this.data.expenses.find(e => e.id === id) || null;
+  }
+
+  public createExpense(data: Partial<Expense>, adminUsername: string): Expense {
+    if (!Array.isArray(this.data.expenses)) {
+      this.data.expenses = [];
+    }
+
+    const amount = Math.max(0, Math.round(Number(data.amount || 0) * 100) / 100);
+    const date = data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)
+      ? data.date
+      : new Date().toISOString().split('T')[0];
+
+    const expense: Expense = {
+      id: `exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date,
+      category: data.category || 'Equipment',
+      amount,
+      description: (data.description || 'Studio Expense').trim(),
+      paymentMethod: data.paymentMethod || 'Mobile Money',
+      receiptRef: data.receiptRef ? data.receiptRef.trim() : undefined,
+      notes: data.notes ? data.notes.trim() : undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: adminUsername
+    };
+
+    this.data.expenses.unshift(expense);
+    this.addAuditLog(
+      'Expense Created',
+      adminUsername,
+      'expense',
+      expense.id,
+      `Logged expense of GH₵${expense.amount.toFixed(2)} for ${expense.category}: "${expense.description}"`
+    );
+    this.save();
+    return expense;
+  }
+
+  public updateExpense(id: string, updates: Partial<Expense>, adminUsername: string): Expense | null {
+    if (!Array.isArray(this.data.expenses)) return null;
+    const expense = this.data.expenses.find(e => e.id === id);
+    if (!expense) return null;
+
+    if (updates.amount !== undefined) {
+      expense.amount = Math.max(0, Math.round(Number(updates.amount || 0) * 100) / 100);
+    }
+    if (updates.date && /^\d{4}-\d{2}-\d{2}$/.test(updates.date)) {
+      expense.date = updates.date;
+    }
+    if (updates.category) expense.category = updates.category;
+    if (updates.description !== undefined) expense.description = updates.description.trim();
+    if (updates.paymentMethod) expense.paymentMethod = updates.paymentMethod;
+    if (updates.receiptRef !== undefined) expense.receiptRef = updates.receiptRef ? updates.receiptRef.trim() : undefined;
+    if (updates.notes !== undefined) expense.notes = updates.notes ? updates.notes.trim() : undefined;
+
+    expense.updatedAt = new Date().toISOString();
+
+    this.addAuditLog(
+      'Expense Updated',
+      adminUsername,
+      'expense',
+      expense.id,
+      `Updated expense ${expense.id} (GH₵${expense.amount.toFixed(2)} - ${expense.category})`
+    );
+    this.save();
+    return expense;
+  }
+
+  public deleteExpense(id: string, adminUsername: string): boolean {
+    if (!Array.isArray(this.data.expenses)) return false;
+    const index = this.data.expenses.findIndex(e => e.id === id);
+    if (index === -1) return false;
+
+    const removed = this.data.expenses[index];
+    this.data.expenses.splice(index, 1);
+    this.addAuditLog(
+      'Expense Deleted',
+      adminUsername,
+      'expense',
+      id,
+      `Deleted expense of GH₵${removed.amount.toFixed(2)} (${removed.category}: ${removed.description})`
+    );
+    this.save();
+    return true;
+  }
+
+  // ==================== FINANCIAL CALCULATIONS & ANALYTICS ====================
+  public getFinanceOverview(timeRange: string = 'all', customStart?: string, customEnd?: string): FinanceOverviewStats {
+    const { startDate, endDate } = resolveDateFilter(timeRange, customStart, customEnd);
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    const currentYearKey = `${currentYear}`;
+
+    const allBookings = this.data.bookings || [];
+    const allExpenses = this.data.expenses || [];
+
+    let totalRevenue = 0;
+    let revenueThisMonth = 0;
+    let revenueThisYear = 0;
+    let depositRevenue = 0;
+    let finalPaymentRevenue = 0;
+    let additionalPaymentRevenue = 0;
+    let refundedTotal = 0;
+    let outstandingPayments = 0;
+    let paidBookingsCount = 0;
+    let totalBookingsCount = 0;
+
+    for (const b of allBookings) {
+      const isCancelled = b.bookingStatus === 'Cancelled';
+      const quote = Number(b.quoteAmount || 0);
+      const paid = Number(b.totalPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const finalP = Number(b.finalPayment || 0);
+      const additional = Number(b.additionalPayment || 0);
+      const refund = Number(b.refundAmount || 0);
+      const bookingDateStr = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+
+      // Secondary calendar comparisons (always current month & current year lifetime metrics)
+      if (!isCancelled || paid > 0) {
+        if (bookingDateStr.startsWith(currentMonthKey)) {
+          revenueThisMonth += paid;
+        }
+        if (bookingDateStr.startsWith(currentYearKey)) {
+          revenueThisYear += paid;
+        }
+      }
+
+      // Check if within selected date filter
+      const inRange = isDateInRange(bookingDateStr, startDate, endDate);
+      if (!inRange) continue;
+
+      // Handle Cancelled bookings with or without refund:
+      // - Cancelled with no refund: paid > 0 counts as retained revenue
+      // - Cancelled with full refund: paid = 0, contributes GH₵0 to totalRevenue
+      // - Cancelled with partial refund: paid > 0 counts as net retained revenue
+      if (isCancelled) {
+        if (paid > 0) {
+          totalRevenue += paid;
+          depositRevenue += deposit;
+          finalPaymentRevenue += finalP;
+          additionalPaymentRevenue += additional;
+          refundedTotal += refund;
+        } else if (refund > 0) {
+          depositRevenue += deposit;
+          finalPaymentRevenue += finalP;
+          additionalPaymentRevenue += additional;
+          refundedTotal += refund;
+        }
+        // Cancelled bookings do NOT carry outstanding balances
+        continue;
+      }
+
+      // Active / Non-cancelled bookings
+      totalBookingsCount += 1;
+      totalRevenue += paid;
+      depositRevenue += deposit;
+      finalPaymentRevenue += finalP;
+      additionalPaymentRevenue += additional;
+      refundedTotal += refund;
+
+      if (paid >= quote && quote > 0) {
+        paidBookingsCount += 1;
+      }
+
+      const outstanding = Math.max(0, quote - paid);
+      outstandingPayments += outstanding;
+    }
+
+    let totalExpenses = 0;
+    let expensesThisMonth = 0;
+    let expensesThisYear = 0;
+
+    for (const e of allExpenses) {
+      const amt = Number(e.amount || 0);
+      const expenseDateStr = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+
+      // Secondary calendar comparisons
+      if (expenseDateStr.startsWith(currentMonthKey)) {
+        expensesThisMonth += amt;
+      }
+      if (expenseDateStr.startsWith(currentYearKey)) {
+        expensesThisYear += amt;
+      }
+
+      // Check if within selected date filter
+      if (!isDateInRange(expenseDateStr, startDate, endDate)) continue;
+
+      totalExpenses += amt;
+    }
+
+    const netIncome = Math.round((totalRevenue - totalExpenses) * 100) / 100;
+    const netIncomeThisMonth = Math.round((revenueThisMonth - expensesThisMonth) * 100) / 100;
+    const netIncomeThisYear = Math.round((revenueThisYear - expensesThisYear) * 100) / 100;
+    const averageBookingValue = paidBookingsCount > 0
+      ? Math.round((totalRevenue / paidBookingsCount) * 100) / 100
+      : (totalBookingsCount > 0 ? Math.round((totalRevenue / totalBookingsCount) * 100) / 100 : 0);
+
+    return {
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      revenueThisMonth: Math.round(revenueThisMonth * 100) / 100,
+      revenueThisYear: Math.round(revenueThisYear * 100) / 100,
+      totalExpenses: Math.round(totalExpenses * 100) / 100,
+      expensesThisMonth: Math.round(expensesThisMonth * 100) / 100,
+      expensesThisYear: Math.round(expensesThisYear * 100) / 100,
+      netIncome,
+      netIncomeThisMonth,
+      netIncomeThisYear,
+      outstandingPayments: Math.round(outstandingPayments * 100) / 100,
+      paidBookingsCount,
+      totalBookingsCount,
+      averageBookingValue,
+      depositRevenue: Math.round(depositRevenue * 100) / 100,
+      finalPaymentRevenue: Math.round(finalPaymentRevenue * 100) / 100,
+      additionalPaymentRevenue: Math.round(additionalPaymentRevenue * 100) / 100,
+      refundedTotal: Math.round(refundedTotal * 100) / 100
+    };
+  }
+
+  public getFinanceAnalytics(timeRange: string = 'this_year', customStart?: string, customEnd?: string): FinanceAnalyticsData {
+    const { startDate, endDate } = resolveDateFilter(timeRange, customStart, customEnd);
+    const allBookings = this.data.bookings || [];
+    const allExpenses = this.data.expenses || [];
+
+    // 1. Monthly Revenue & Expenses (Rolling Last 6 Months)
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const monthlyRevenue: FinanceAnalyticsData['monthlyRevenue'] = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const monthKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const monthLabel = `${monthNames[m]} ${y}`;
+
+      const mRevenue = allBookings
+        .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+        .filter(b => {
+          const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+          return bDate.startsWith(monthKey);
+        })
+        .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+      const mExpenses = allExpenses
+        .filter(e => {
+          const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+          return eDate.startsWith(monthKey);
+        })
+        .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+      monthlyRevenue.push({
+        month: monthKey,
+        monthLabel,
+        revenue: Math.round(mRevenue * 100) / 100,
+        expenses: Math.round(mExpenses * 100) / 100,
+        netIncome: Math.round((mRevenue - mExpenses) * 100) / 100
+      });
+    }
+
+    // 2. Revenue Over Time (Dynamic Timeline points aligned with selected filter)
+    const revenueOverTime: FinanceAnalyticsData['revenueOverTime'] = [];
+
+    if (timeRange === 'this_year') {
+      const year = now.getFullYear();
+      for (let m = 0; m < 12; m++) {
+        const monthKey = `${year}-${String(m + 1).padStart(2, '0')}`;
+        const label = `${monthNames[m]} ${year}`;
+
+        const mRevenue = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate.startsWith(monthKey);
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const mExpenses = allExpenses
+          .filter(e => {
+            const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+            return eDate.startsWith(monthKey);
+          })
+          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(mRevenue * 100) / 100,
+          expenses: Math.round(mExpenses * 100) / 100,
+          netIncome: Math.round((mRevenue - mExpenses) * 100) / 100
+        });
+      }
+    } else if (timeRange === 'this_month') {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const label = `${monthNames[month]} ${String(day).padStart(2, '0')}`;
+
+        const dayRev = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate === dayKey;
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const dayExp = allExpenses
+          .filter(e => {
+            const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+            return eDate === dayKey;
+          })
+          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(dayRev * 100) / 100,
+          expenses: Math.round(dayExp * 100) / 100,
+          netIncome: Math.round((dayRev - dayExp) * 100) / 100
+        });
+      }
+    } else if (timeRange === 'this_week') {
+      const day = now.getDay();
+      const diffToMonday = (day + 6) % 7;
+      const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        const dayNum = d.getDate();
+        const dayKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const label = `${weekdayNames[d.getDay()]} ${monthNames[m]} ${String(dayNum).padStart(2, '0')}`;
+
+        const dayRev = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate === dayKey;
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const dayExp = allExpenses
+          .filter(e => {
+            const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+            return eDate === dayKey;
+          })
+          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(dayRev * 100) / 100,
+          expenses: Math.round(dayExp * 100) / 100,
+          netIncome: Math.round((dayRev - dayExp) * 100) / 100
+        });
+      }
+    } else if (timeRange === 'today') {
+      const dayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const label = `Today (${monthNames[now.getMonth()]} ${now.getDate()})`;
+
+      const dayRev = allBookings
+        .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+        .filter(b => {
+          const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+          return bDate === dayKey;
+        })
+        .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+      const dayExp = allExpenses
+        .filter(e => {
+          const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+          return eDate === dayKey;
+        })
+        .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+      revenueOverTime.push({
+        date: label,
+        revenue: Math.round(dayRev * 100) / 100,
+        expenses: Math.round(dayExp * 100) / 100,
+        netIncome: Math.round((dayRev - dayExp) * 100) / 100
+      });
+    } else if (timeRange === 'last_3_months') {
+      for (let i = 2; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        const monthKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const label = `${monthNames[m]} ${y}`;
+
+        const mRevenue = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate.startsWith(monthKey);
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const mExpenses = allExpenses
+          .filter(e => {
+            const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+            return eDate.startsWith(monthKey);
+          })
+          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(mRevenue * 100) / 100,
+          expenses: Math.round(mExpenses * 100) / 100,
+          netIncome: Math.round((mRevenue - mExpenses) * 100) / 100
+        });
+      }
+    } else if (timeRange === 'custom' && customStart && customEnd) {
+      const s = new Date(customStart);
+      const e = new Date(customEnd);
+      const diffDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000));
+      const step = diffDays > 60 ? Math.ceil(diffDays / 12) : 1;
+
+      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + step)) {
+        const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const label = `${monthNames[d.getMonth()]} ${String(d.getDate()).padStart(2, '0')}`;
+
+        const dayRev = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate === dayKey;
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const dayExp = allExpenses
+          .filter(exp => {
+            const eDate = exp.date || (exp.createdAt ? exp.createdAt.split('T')[0] : '');
+            return eDate === dayKey;
+          })
+          .reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(dayRev * 100) / 100,
+          expenses: Math.round(dayExp * 100) / 100,
+          netIncome: Math.round((dayRev - dayExp) * 100) / 100
+        });
+      }
+    } else {
+      // Default (all time): rolling 6 months
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        const monthKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const label = `${monthNames[m]} ${y}`;
+
+        const mRevenue = allBookings
+          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
+          .filter(b => {
+            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+            return bDate.startsWith(monthKey);
+          })
+          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
+
+        const mExpenses = allExpenses
+          .filter(e => {
+            const eDate = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+            return eDate.startsWith(monthKey);
+          })
+          .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        revenueOverTime.push({
+          date: label,
+          revenue: Math.round(mRevenue * 100) / 100,
+          expenses: Math.round(mExpenses * 100) / 100,
+          netIncome: Math.round((mRevenue - mExpenses) * 100) / 100
+        });
+      }
+    }
+
+    // 3. Revenue by Service (Filtered by date boundary, including retained revenue)
+    const serviceMap: Record<string, { revenue: number; count: number }> = {};
+    let totalServiceRevenue = 0;
+
+    for (const b of allBookings) {
+      const isCancelled = b.bookingStatus === 'Cancelled';
+      const paid = Number(b.totalPaid || 0);
+      if (isCancelled && paid === 0) continue;
+
+      const bookingDateStr = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+      if (!isDateInRange(bookingDateStr, startDate, endDate)) continue;
+
+      const srv = b.serviceTitle || 'Editorial Shoot';
+      if (!serviceMap[srv]) {
+        serviceMap[srv] = { revenue: 0, count: 0 };
+      }
+      serviceMap[srv].revenue += paid;
+      if (!isCancelled) {
+        serviceMap[srv].count += 1;
+      }
+      totalServiceRevenue += paid;
+    }
+
+    const revenueByService: FinanceAnalyticsData['revenueByService'] = Object.entries(serviceMap)
+      .map(([service, data]) => ({
+        service,
+        revenue: Math.round(data.revenue * 100) / 100,
+        count: data.count,
+        percentage: totalServiceRevenue > 0 ? Math.round((data.revenue / totalServiceRevenue) * 100) : 0
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // 4. Expenses by Category (Filtered by date boundary)
+    const categoryMap: Record<string, { amount: number; count: number }> = {};
+    let totalCatExpense = 0;
+
+    for (const e of allExpenses) {
+      const expenseDateStr = e.date || (e.createdAt ? e.createdAt.split('T')[0] : '');
+      if (!isDateInRange(expenseDateStr, startDate, endDate)) continue;
+
+      const cat = e.category || 'Other';
+      const amt = Number(e.amount || 0);
+      if (!categoryMap[cat]) {
+        categoryMap[cat] = { amount: 0, count: 0 };
+      }
+      categoryMap[cat].amount += amt;
+      categoryMap[cat].count += 1;
+      totalCatExpense += amt;
+    }
+
+    const expensesByCategory: FinanceAnalyticsData['expensesByCategory'] = Object.entries(categoryMap)
+      .map(([category, data]) => ({
+        category,
+        amount: Math.round(data.amount * 100) / 100,
+        count: data.count,
+        percentage: totalCatExpense > 0 ? Math.round((data.amount / totalCatExpense) * 100) : 0
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
+    // 5. Paid vs Outstanding (Filtered by date boundary)
+    let paidTotal = 0;
+    let paidCount = 0;
+    let outstandingTotal = 0;
+    let outstandingCount = 0;
+
+    for (const b of allBookings) {
+      const isCancelled = b.bookingStatus === 'Cancelled';
+      const quote = Number(b.quoteAmount || 0);
+      const paid = Number(b.totalPaid || 0);
+      if (isCancelled && paid === 0) continue;
+
+      const bookingDateStr = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+      if (!isDateInRange(bookingDateStr, startDate, endDate)) continue;
+
+      paidTotal += paid;
+      if (!isCancelled) {
+        if (paid >= quote && quote > 0) paidCount++;
+        const out = Math.max(0, quote - paid);
+        if (out > 0) {
+          outstandingTotal += out;
+          outstandingCount++;
+        }
+      }
+    }
+
+    const paidVsOutstanding: FinanceAnalyticsData['paidVsOutstanding'] = [
+      { name: 'Paid Collections', value: Math.round(paidTotal * 100) / 100, count: paidCount, color: '#10B981' },
+      { name: 'Outstanding Balances', value: Math.round(outstandingTotal * 100) / 100, count: outstandingCount, color: '#F59E0B' }
+    ];
+
+    // 6. Income Components (Deposits vs Final vs Additional for selected period)
+    let totalDeposits = 0;
+    let totalFinal = 0;
+    let totalAdditional = 0;
+
+    for (const b of allBookings) {
+      const isCancelled = b.bookingStatus === 'Cancelled';
+      const paid = Number(b.totalPaid || 0);
+      if (isCancelled && paid === 0) continue;
+
+      const bookingDateStr = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+      if (!isDateInRange(bookingDateStr, startDate, endDate)) continue;
+
+      totalDeposits += Number(b.depositAmount || 0);
+      totalFinal += Number(b.finalPayment || 0);
+      totalAdditional += Number(b.additionalPayment || 0);
+    }
+    const totalCollected = totalDeposits + totalFinal + totalAdditional;
+
+    const incomeComponents: FinanceAnalyticsData['incomeComponents'] = [
+      {
+        name: 'Deposit Payments',
+        value: Math.round(totalDeposits * 100) / 100,
+        percentage: totalCollected > 0 ? Math.round((totalDeposits / totalCollected) * 100) : 0,
+        color: '#D4AF37'
+      },
+      {
+        name: 'Final Balance Payments',
+        value: Math.round(totalFinal * 100) / 100,
+        percentage: totalCollected > 0 ? Math.round((totalFinal / totalCollected) * 100) : 0,
+        color: '#10B981'
+      },
+      {
+        name: 'Additional Shoot Payments',
+        value: Math.round(totalAdditional * 100) / 100,
+        percentage: totalCollected > 0 ? Math.round((totalAdditional / totalCollected) * 100) : 0,
+        color: '#6366F1'
+      }
+    ];
+
+    return {
+      revenueOverTime,
+      monthlyRevenue,
+      revenueByService,
+      expensesByCategory,
+      paidVsOutstanding,
+      incomeComponents
+    };
+  }
+
+  public getFinancialTransactions(filter?: {
+    search?: string;
+    type?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+    timeRange?: string;
+    limit?: number;
+  }): FinancialTransaction[] {
+    const transactions: FinancialTransaction[] = [];
+    const allBookings = this.data.bookings || [];
+    const allExpenses = this.data.expenses || [];
+
+    // Transform Bookings into Transaction Records
+    for (const b of allBookings) {
+      const isCancelled = b.bookingStatus === 'Cancelled';
+      const quote = Number(b.quoteAmount || 0);
+      const paid = Number(b.totalPaid || 0);
+      const deposit = Number(b.depositAmount || 0);
+      const finalP = Number(b.finalPayment || 0);
+      const additional = Number(b.additionalPayment || 0);
+      const refund = Number(b.refundAmount || 0);
+      const date = b.date || (b.createdAt ? b.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]);
+
+      const isRetained = isCancelled && paid > 0;
+
+      if (deposit > 0) {
+        let status: FinancialTransaction['status'] = 'Deposit Paid';
+        if (isRetained) {
+          status = 'Cancelled — Deposit Retained';
+        } else if (isCancelled) {
+          status = refund >= deposit ? 'Refunded' : 'Cancelled';
+        } else if (paid >= quote) {
+          status = 'Paid';
+        }
+
+        transactions.push({
+          id: `tx_dep_${b.id}`,
+          date,
+          type: 'deposit',
+          typeLabel: isRetained ? 'Retained Deposit' : isCancelled ? 'Cancelled Deposit' : 'Deposit Payment',
+          title: isRetained
+            ? `Retained Deposit - ${b.serviceTitle}`
+            : isCancelled
+            ? `Cancelled Deposit - ${b.serviceTitle}`
+            : `Deposit - ${b.serviceTitle}`,
+          clientOrPayee: b.clientName,
+          serviceOrCategory: b.serviceTitle,
+          amount: deposit,
+          status,
+          paymentMethod: 'Mobile Money / Transfer',
+          notes: b.notes ? `Booking ref: ${b.bookingReference}. ${b.notes}` : `Booking ref: ${b.bookingReference}`,
+          bookingId: b.id,
+          bookingRef: b.bookingReference
+        });
+      }
+
+      if (additional > 0) {
+        let status: FinancialTransaction['status'] = 'Partially Paid';
+        if (isRetained) {
+          status = 'Cancelled — Payment Retained';
+        } else if (isCancelled) {
+          status = 'Cancelled';
+        }
+
+        transactions.push({
+          id: `tx_add_${b.id}`,
+          date,
+          type: 'additional_payment',
+          typeLabel: isRetained ? 'Retained Add-on' : 'Additional Payment',
+          title: `Add-on - ${b.serviceTitle}`,
+          clientOrPayee: b.clientName,
+          serviceOrCategory: b.serviceTitle,
+          amount: additional,
+          status,
+          paymentMethod: 'Bank Transfer / MoMo',
+          notes: `Booking ref: ${b.bookingReference}`,
+          bookingId: b.id,
+          bookingRef: b.bookingReference
+        });
+      }
+
+      if (finalP > 0) {
+        let status: FinancialTransaction['status'] = 'Paid';
+        if (isRetained) {
+          status = 'Cancelled — Payment Retained';
+        } else if (isCancelled) {
+          status = 'Cancelled';
+        }
+
+        transactions.push({
+          id: `tx_fin_${b.id}`,
+          date,
+          type: 'final_payment',
+          typeLabel: isRetained ? 'Retained Final Payment' : 'Final Balance Payment',
+          title: `Final Payment - ${b.serviceTitle}`,
+          clientOrPayee: b.clientName,
+          serviceOrCategory: b.serviceTitle,
+          amount: finalP,
+          status,
+          paymentMethod: 'Direct Payment',
+          notes: `Booking ref: ${b.bookingReference}`,
+          bookingId: b.id,
+          bookingRef: b.bookingReference
+        });
+      }
+
+      // If quote set with 0 paid (pending payment) - only for non-cancelled bookings
+      if (quote > 0 && paid === 0 && !isCancelled) {
+        transactions.push({
+          id: `tx_pen_${b.id}`,
+          date,
+          type: 'booking_full',
+          typeLabel: 'Pending Invoice',
+          title: `Pending Quote - ${b.serviceTitle}`,
+          clientOrPayee: b.clientName,
+          serviceOrCategory: b.serviceTitle,
+          amount: quote,
+          status: 'Pending',
+          paymentMethod: 'Unpaid',
+          notes: `Booking ref: ${b.bookingReference}`,
+          bookingId: b.id,
+          bookingRef: b.bookingReference
+        });
+      }
+
+      if (refund > 0) {
+        transactions.push({
+          id: `tx_ref_${b.id}`,
+          date,
+          type: 'refund',
+          typeLabel: 'Client Refund',
+          title: `Refund - ${b.serviceTitle}`,
+          clientOrPayee: b.clientName,
+          serviceOrCategory: b.serviceTitle,
+          amount: -refund,
+          status: 'Refunded',
+          paymentMethod: 'Reversed Payment',
+          notes: `Refunded for booking ${b.bookingReference}${isCancelled ? ' (Cancelled booking)' : ''}`,
+          bookingId: b.id,
+          bookingRef: b.bookingReference
+        });
+      }
+    }
+
+    // Transform Expenses into Transaction Records
+    for (const e of allExpenses) {
+      transactions.push({
+        id: `tx_exp_${e.id}`,
+        date: e.date || (e.createdAt ? e.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
+        type: 'expense',
+        typeLabel: `Expense (${e.category})`,
+        title: e.description || `Expense: ${e.category}`,
+        clientOrPayee: e.description,
+        serviceOrCategory: e.category,
+        amount: -Number(e.amount || 0),
+        status: 'Completed',
+        paymentMethod: e.paymentMethod || 'Mobile Money',
+        notes: [e.receiptRef ? `Receipt: ${e.receiptRef}` : '', e.notes || ''].filter(Boolean).join(' - ') || undefined,
+        expenseId: e.id
+      });
+    }
+
+    let result = transactions;
+
+    if (filter) {
+      if (filter.type && filter.type !== 'all') {
+        if (filter.type === 'income') {
+          result = result.filter(t => t.type !== 'expense' && t.type !== 'refund');
+        } else if (filter.type === 'expense') {
+          result = result.filter(t => t.type === 'expense');
+        } else {
+          result = result.filter(t => t.type === filter.type);
+        }
+      }
+
+      if (filter.status && filter.status !== 'all') {
+        result = result.filter(t => t.status.toLowerCase() === filter.status!.toLowerCase());
+      }
+
+      if (filter.search) {
+        const q = filter.search.toLowerCase().trim();
+        result = result.filter(t =>
+          t.title.toLowerCase().includes(q) ||
+          t.clientOrPayee.toLowerCase().includes(q) ||
+          t.serviceOrCategory.toLowerCase().includes(q) ||
+          (t.bookingRef && t.bookingRef.toLowerCase().includes(q)) ||
+          (t.notes && t.notes.toLowerCase().includes(q)) ||
+          (t.paymentMethod && t.paymentMethod.toLowerCase().includes(q))
+        );
+      }
+
+      let filterStart = filter.startDate;
+      let filterEnd = filter.endDate;
+      if (filter.timeRange && !filterStart && !filterEnd) {
+        const resolved = resolveDateFilter(filter.timeRange);
+        filterStart = resolved.startDate;
+        filterEnd = resolved.endDate;
+      }
+
+      if (filterStart || filterEnd) {
+        result = result.filter(t => isDateInRange(t.date, filterStart, filterEnd));
+      }
+    }
+
+    result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    if (filter?.limit && filter.limit > 0) {
+      result = result.slice(0, filter.limit);
+    }
+
+    return result;
   }
 }
 

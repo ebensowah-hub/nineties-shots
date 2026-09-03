@@ -2,58 +2,113 @@
  * Server-side validation, rate-limiting, and financial integrity helpers
  */
 
-// ==================== LOGIN RATE LIMITER ====================
+// ==================== LOGIN RATE LIMITER & ACCOUNT LOCKOUT ====================
 interface LoginAttemptRecord {
   attempts: number[];
 }
 
-const loginAttempts = new Map<string, LoginAttemptRecord>();
+const ipUserAttempts = new Map<string, LoginAttemptRecord>();
+const accountAttempts = new Map<string, LoginAttemptRecord>();
 
-const MAX_LOGIN_ATTEMPTS = 5;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+// IP + Username: 5 attempts per 15 minutes
+const MAX_IP_USER_ATTEMPTS = 5;
+const IP_USER_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
-export function checkLoginRateLimit(ip: string, username: string): { allowed: boolean; retryAfterSeconds?: number; attemptsLeft?: number } {
+// Account / Username Level: 15 attempts per 60 minutes across any IP
+const MAX_ACCOUNT_ATTEMPTS = 15;
+const ACCOUNT_WINDOW_MS = 60 * 60 * 1000; // 60 minutes
+
+export function checkLoginRateLimit(ip: string, username: string): {
+  allowed: boolean;
+  isAccountLockout?: boolean;
+  retryAfterSeconds?: number;
+  attemptsLeft?: number;
+  message?: string;
+} {
   const cleanIp = ip || 'unknown';
   const cleanUser = (username || '').trim().toLowerCase();
-  const key = `${cleanIp}:${cleanUser}`;
-
   const now = Date.now();
-  const record = loginAttempts.get(key);
 
-  if (!record) {
-    return { allowed: true, attemptsLeft: MAX_LOGIN_ATTEMPTS };
+  // Check 1: Account-level lockout (protects against IP-rotating attacks)
+  if (cleanUser) {
+    const accRecord = accountAttempts.get(cleanUser);
+    if (accRecord) {
+      const activeAccAttempts = accRecord.attempts.filter(t => now - t < ACCOUNT_WINDOW_MS);
+      accRecord.attempts = activeAccAttempts;
+
+      if (activeAccAttempts.length >= MAX_ACCOUNT_ATTEMPTS) {
+        const oldest = activeAccAttempts[0];
+        const retryAfterSeconds = Math.max(1, Math.ceil((ACCOUNT_WINDOW_MS - (now - oldest)) / 1000));
+        return {
+          allowed: false,
+          isAccountLockout: true,
+          retryAfterSeconds,
+          message: 'Account locked due to excessive failed attempts across all networks. Please try again in 1 hour.'
+        };
+      }
+    }
   }
 
-  // Filter out expired attempts outside 15-minute window
-  const activeAttempts = record.attempts.filter(t => now - t < LOGIN_WINDOW_MS);
-  record.attempts = activeAttempts;
+  // Check 2: IP + Username level rate limit
+  const ipKey = `${cleanIp}:${cleanUser}`;
+  const ipRecord = ipUserAttempts.get(ipKey);
 
-  if (activeAttempts.length >= MAX_LOGIN_ATTEMPTS) {
-    const oldest = activeAttempts[0];
-    const retryAfterSeconds = Math.max(1, Math.ceil((LOGIN_WINDOW_MS - (now - oldest)) / 1000));
-    return { allowed: false, retryAfterSeconds };
+  if (!ipRecord) {
+    return { allowed: true, attemptsLeft: MAX_IP_USER_ATTEMPTS };
   }
 
-  return { allowed: true, attemptsLeft: MAX_LOGIN_ATTEMPTS - activeAttempts.length };
+  const activeIpAttempts = ipRecord.attempts.filter(t => now - t < IP_USER_WINDOW_MS);
+  ipRecord.attempts = activeIpAttempts;
+
+  if (activeIpAttempts.length >= MAX_IP_USER_ATTEMPTS) {
+    const oldest = activeIpAttempts[0];
+    const retryAfterSeconds = Math.max(1, Math.ceil((IP_USER_WINDOW_MS - (now - oldest)) / 1000));
+    return {
+      allowed: false,
+      isAccountLockout: false,
+      retryAfterSeconds,
+      message: 'Too many login attempts from this network. Please try again after 15 minutes.'
+    };
+  }
+
+  return { allowed: true, attemptsLeft: MAX_IP_USER_ATTEMPTS - activeIpAttempts.length };
 }
 
-export function recordFailedLogin(ip: string, username: string): void {
+export function recordFailedLogin(ip: string, username: string): { isNowLocked: boolean } {
   const cleanIp = ip || 'unknown';
   const cleanUser = (username || '').trim().toLowerCase();
-  const key = `${cleanIp}:${cleanUser}`;
-
+  const ipKey = `${cleanIp}:${cleanUser}`;
   const now = Date.now();
-  const record = loginAttempts.get(key) || { attempts: [] };
-  record.attempts = record.attempts.filter(t => now - t < LOGIN_WINDOW_MS);
-  record.attempts.push(now);
-  loginAttempts.set(key, record);
+
+  // Record IP+User attempt
+  const ipRecord = ipUserAttempts.get(ipKey) || { attempts: [] };
+  ipRecord.attempts = ipRecord.attempts.filter(t => now - t < IP_USER_WINDOW_MS);
+  ipRecord.attempts.push(now);
+  ipUserAttempts.set(ipKey, ipRecord);
+
+  // Record Account-level attempt
+  let isNowLocked = false;
+  if (cleanUser) {
+    const accRecord = accountAttempts.get(cleanUser) || { attempts: [] };
+    accRecord.attempts = accRecord.attempts.filter(t => now - t < ACCOUNT_WINDOW_MS);
+    accRecord.attempts.push(now);
+    accountAttempts.set(cleanUser, accRecord);
+    if (accRecord.attempts.length >= MAX_ACCOUNT_ATTEMPTS) {
+      isNowLocked = true;
+    }
+  }
+
+  return { isNowLocked };
 }
 
 export function clearLoginAttempts(ip: string, username: string): void {
   const cleanIp = ip || 'unknown';
   const cleanUser = (username || '').trim().toLowerCase();
-  const key = `${cleanIp}:${cleanUser}`;
-  loginAttempts.delete(key);
+  const ipKey = `${cleanIp}:${cleanUser}`;
+  ipUserAttempts.delete(ipKey);
+  if (cleanUser) {
+    accountAttempts.delete(cleanUser);
+  }
 }
 
 // ==================== FINANCIAL VALIDATION ====================

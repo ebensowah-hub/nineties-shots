@@ -24,7 +24,9 @@ interface AuthenticatedRequest extends Request {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const rawPort = process.env.PORT;
+  const parsedPort = parseInt(rawPort || '3000', 10);
+  const PORT = !isNaN(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
 
   // JSON payload parser
   app.use(express.json({ limit: '10mb' }));
@@ -65,12 +67,51 @@ async function startServer() {
     }
 
     req.adminUser = adminUser;
+
+    // Strict Server-Side Password Change Enforcement
+    if (adminUser.mustChangePassword) {
+      const allowedPaths = ['/api/admin/change-password', '/api/admin/logout', '/api/admin/me'];
+      if (!allowedPaths.includes(req.path)) {
+        res.status(403).json({
+          error: 'PASSWORD_CHANGE_REQUIRED',
+          message: 'Password change is required before accessing administrative features.'
+        });
+        return;
+      }
+    }
+
     next();
   };
 
   // ==================== PUBLIC API ENDPOINTS ====================
+  // Production-grade health check that tests database readiness and static asset availability
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString(), brand: 'NINETIES SHOTS' });
+    try {
+      const dbHealthy = db.isHealthy();
+      const isProd = process.env.NODE_ENV === 'production';
+      const frontendReady = !isProd || fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
+
+      if (!dbHealthy || !frontendReady) {
+        console.warn(`[NINETIES SHOTS] [HEALTH DEGRADED] database=${dbHealthy}, frontendReady=${frontendReady}`);
+        res.status(503).json({
+          status: 'degraded',
+          subsystem: !dbHealthy ? 'database' : 'static_frontend',
+          time: new Date().toISOString()
+        });
+        return;
+      }
+
+      res.status(200).json({
+        status: 'ok',
+        time: new Date().toISOString(),
+        brand: 'NINETIES SHOTS'
+      });
+    } catch (err) {
+      res.status(503).json({
+        status: 'error',
+        time: new Date().toISOString()
+      });
+    }
   });
 
   // Public Configuration
@@ -190,11 +231,29 @@ async function startServer() {
         return;
       }
 
-      // Step 2: Rate limit check (5 attempts per 15 minutes per IP + username)
+      // Rate limit check (IP+Username and Account-level lockout)
       const rateLimit = checkLoginRateLimit(clientIp, String(username));
       if (!rateLimit.allowed) {
+        if (rateLimit.isAccountLockout) {
+          db.addAuditLog(
+            'Account Locked',
+            String(username),
+            'auth',
+            'admin-login',
+            `Account locked due to exceeding failure threshold (15 attempts/hour) across networks.`
+          );
+        } else {
+          db.addAuditLog(
+            'Failed Login Rate Limit',
+            String(username),
+            'auth',
+            'admin-login',
+            `IP rate limit triggered from IP ${clientIp}`
+          );
+        }
+
         res.status(429).json({
-          error: 'Too many login attempts. Please try again after 15 minutes.',
+          error: rateLimit.message || 'Too many login attempts. Please try again later.',
           retryAfterSeconds: rateLimit.retryAfterSeconds
         });
         return;
@@ -203,7 +262,25 @@ async function startServer() {
       const auth = db.authenticateAdmin(String(username), String(password));
       if (!auth) {
         // Record failed attempt
-        recordFailedLogin(clientIp, String(username));
+        const { isNowLocked } = recordFailedLogin(clientIp, String(username));
+        db.addAuditLog(
+          'Failed Login Attempt',
+          String(username),
+          'auth',
+          'admin-login',
+          `Failed login attempt from IP ${clientIp}`
+        );
+
+        if (isNowLocked) {
+          db.addAuditLog(
+            'Account Locked',
+            String(username),
+            'auth',
+            'admin-login',
+            `Account locked: reached failure threshold across network requests.`
+          );
+        }
+
         res.status(401).json({ error: 'Invalid username or password' });
         return;
       }
@@ -235,6 +312,46 @@ async function startServer() {
       db.deleteSession(token);
     }
     res.json({ success: true, message: 'Logged out successfully' });
+  });
+
+  // Revoke all sessions
+  app.post('/api/admin/sessions/revoke-all', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const keepCurrent = Boolean(req.body?.keepCurrent);
+      const authHeader = req.headers.authorization;
+      let currentToken = '';
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        currentToken = authHeader.substring(7).trim();
+      } else if (req.headers['x-admin-token']) {
+        currentToken = String(req.headers['x-admin-token']).trim();
+      }
+
+      const revokedCount = db.revokeAllSessions(
+        req.adminUser!.id,
+        keepCurrent ? currentToken : undefined
+      );
+
+      db.addAuditLog(
+        'Revoke All Sessions',
+        req.adminUser!.username,
+        'auth',
+        req.adminUser!.id,
+        keepCurrent
+          ? `Revoked ${revokedCount} other active sessions (kept current session)`
+          : `Revoked all ${revokedCount} active sessions for this account`
+      );
+
+      res.json({
+        success: true,
+        revokedCount,
+        message: keepCurrent
+          ? `Successfully revoked ${revokedCount} other active sessions.`
+          : 'All active sessions have been revoked.'
+      });
+    } catch (err: any) {
+      console.error('Error revoking sessions:', err);
+      res.status(500).json({ error: 'Failed to revoke sessions' });
+    }
   });
 
   app.get('/api/admin/me', requireAdminAuth, (req: AuthenticatedRequest, res) => {
@@ -619,6 +736,191 @@ async function startServer() {
     res.json(db.getAuditLogs());
   });
 
+  // ==================== FINANCE & EXPENSES ENDPOINTS ====================
+  // 1. Financial Overview Summary
+  app.get('/api/admin/finance/overview', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const timeRange = (req.query.timeRange as string) || 'all';
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+      const overview = db.getFinanceOverview(timeRange, startDate, endDate);
+      res.json(overview);
+    } catch (err) {
+      console.error('Error fetching financial overview:', err);
+      res.status(500).json({ error: 'Failed to calculate financial overview' });
+    }
+  });
+
+  // 2. Financial Analytics Charts Data
+  app.get('/api/admin/finance/analytics', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const timeRange = (req.query.timeRange as string) || 'this_year';
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+      const analytics = db.getFinanceAnalytics(timeRange, startDate, endDate);
+      res.json(analytics);
+    } catch (err) {
+      console.error('Error fetching financial analytics:', err);
+      res.status(500).json({ error: 'Failed to compute financial analytics' });
+    }
+  });
+
+  // 3. Unified Financial Transactions Ledger
+  app.get('/api/admin/finance/transactions', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const search = req.query.search as string;
+      const type = req.query.type as string;
+      const status = req.query.status as string;
+      const timeRange = req.query.timeRange as string;
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+
+      const transactions = db.getFinancialTransactions({
+        search,
+        type,
+        status,
+        timeRange,
+        startDate,
+        endDate,
+        limit
+      });
+      res.json(transactions);
+    } catch (err) {
+      console.error('Error fetching financial transactions:', err);
+      res.status(500).json({ error: 'Failed to retrieve transaction ledger' });
+    }
+  });
+
+  // 4. Expenses CRUD
+  app.get('/api/admin/expenses', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const category = req.query.category as string;
+      const search = req.query.search as string;
+      const timeRange = req.query.timeRange as string;
+      const startDate = req.query.startDate as string;
+      const endDate = req.query.endDate as string;
+      const paymentMethod = req.query.paymentMethod as string;
+
+      const expenses = db.getExpenses({
+        category,
+        search,
+        timeRange,
+        startDate,
+        endDate,
+        paymentMethod
+      });
+      res.json(expenses);
+    } catch (err) {
+      console.error('Error fetching expenses:', err);
+      res.status(500).json({ error: 'Failed to retrieve expenses' });
+    }
+  });
+
+  app.post('/api/admin/expenses', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const { amount, description, category, date, paymentMethod, receiptRef, notes } = req.body;
+
+      if (amount === undefined || isNaN(Number(amount)) || Number(amount) <= 0) {
+        res.status(400).json({ error: 'Validation error: A valid positive expense amount is required.' });
+        return;
+      }
+      if (!description || typeof description !== 'string' || !description.trim()) {
+        res.status(400).json({ error: 'Validation error: Expense description is required.' });
+        return;
+      }
+
+      const expense = db.createExpense(
+        {
+          amount: Number(amount),
+          description: description.trim(),
+          category: category || 'Equipment',
+          date: date || new Date().toISOString().split('T')[0],
+          paymentMethod: paymentMethod || 'Mobile Money',
+          receiptRef,
+          notes
+        },
+        req.adminUser!.username
+      );
+
+      res.status(201).json(expense);
+    } catch (err) {
+      console.error('Error creating expense:', err);
+      res.status(500).json({ error: 'Failed to create expense entry' });
+    }
+  });
+
+  app.get('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    const expense = db.getExpenseById(req.params.id);
+    if (!expense) {
+      res.status(404).json({ error: 'Expense record not found' });
+      return;
+    }
+    res.json(expense);
+  });
+
+  app.put('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const { amount, description, category, date, paymentMethod, receiptRef, notes } = req.body;
+
+      if (amount !== undefined && (isNaN(Number(amount)) || Number(amount) < 0)) {
+        res.status(400).json({ error: 'Validation error: Expense amount must be a positive number.' });
+        return;
+      }
+
+      const updated = db.updateExpense(
+        req.params.id,
+        {
+          amount: amount !== undefined ? Number(amount) : undefined,
+          description: description !== undefined ? description.trim() : undefined,
+          category,
+          date,
+          paymentMethod,
+          receiptRef,
+          notes
+        },
+        req.adminUser!.username
+      );
+
+      if (!updated) {
+        res.status(404).json({ error: 'Expense record not found' });
+        return;
+      }
+      res.json(updated);
+    } catch (err) {
+      console.error('Error updating expense:', err);
+      res.status(500).json({ error: 'Failed to update expense entry' });
+    }
+  });
+
+  app.patch('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const updated = db.updateExpense(req.params.id, req.body, req.adminUser!.username);
+      if (!updated) {
+        res.status(404).json({ error: 'Expense record not found' });
+        return;
+      }
+      res.json(updated);
+    } catch (err) {
+      console.error('Error updating expense:', err);
+      res.status(500).json({ error: 'Failed to update expense entry' });
+    }
+  });
+
+  app.delete('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    try {
+      const success = db.deleteExpense(req.params.id, req.adminUser!.username);
+      if (!success) {
+        res.status(404).json({ error: 'Expense record not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Error deleting expense:', err);
+      res.status(500).json({ error: 'Failed to delete expense entry' });
+    }
+  });
+
   // ==================== CURRENCY CONVERSION ENDPOINTS ====================
   // Get live exchange rates status for all supported currencies to GHS
   app.get('/api/admin/currency/rates', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
@@ -766,6 +1068,15 @@ async function startServer() {
     }
   });
 
+  // ==================== API 404 GUARD ====================
+  // Ensure unhandled /api/* routes return structured JSON rather than falling through to frontend HTML
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({
+      error: 'API_ENDPOINT_NOT_FOUND',
+      message: `The requested endpoint ${req.method} ${req.path} does not exist.`
+    });
+  });
+
   // ==================== VITE & STATIC SERVING ====================
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -775,15 +1086,46 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    const indexPath = path.join(distPath, 'index.html');
+
+    if (!fs.existsSync(indexPath)) {
+      console.warn(`[NINETIES SHOTS] [STARTUP WARNING] Production frontend build not found at: ${indexPath}`);
+    }
+
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(503).send('NINETIES SHOTS production build is initializing. Please refresh in a moment.');
+      }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[NINETIES SHOTS] Server running on http://0.0.0.0:${PORT}`);
+    console.log(`[NINETIES SHOTS] Subsystem status: Environment=${process.env.NODE_ENV || 'development'}, Database=${db.isHealthy() ? 'OK' : 'DEGRADED'}`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[NINETIES SHOTS] [FATAL] Port ${PORT} is already in use. Cannot bind.`);
+    } else {
+      console.error('[NINETIES SHOTS] [FATAL] Server listener error:', err);
+    }
+    process.exit(1);
   });
 }
 
-startServer();
+process.on('uncaughtException', (err) => {
+  console.error('[NINETIES SHOTS] [UNCAUGHT EXCEPTION]:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[NINETIES SHOTS] [UNHANDLED REJECTION]:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('[NINETIES SHOTS] [FATAL STARTUP FAILURE]:', err);
+  process.exit(1);
+});

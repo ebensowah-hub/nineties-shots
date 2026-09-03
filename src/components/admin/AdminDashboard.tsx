@@ -1,6 +1,5 @@
 import React from 'react';
-import { DashboardStats, Inquiry, Booking } from '../../types';
-import { AdminTab } from './AdminSidebar';
+import { DashboardStats, Inquiry, Booking, AdminTab } from '../../types';
 import {
   Inbox,
   CalendarCheck,
@@ -80,11 +79,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       tab: 'bookings' as AdminTab
     },
     {
-      label: 'RECORDED REVENUE',
+      label: 'CONTRACT PIPELINE / QUOTED',
       value: safeStats.totalRevenue > 0 ? `GH₵${safeStats.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'GH₵0.00',
-      sub: `Paid: GH₵${safeStats.paidRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} // Unpaid: GH₵${safeStats.outstandingRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      sub: 'Total value of all quoted booking contracts',
       icon: DollarSign,
-      tab: 'bookings' as AdminTab
+      tab: 'finance' as AdminTab
+    },
+    {
+      label: 'TOTAL REVENUE / COLLECTED',
+      value: safeStats.paidRevenue > 0 ? `GH₵${safeStats.paidRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'GH₵0.00',
+      sub: `Collected cash // Outstanding: GH₵${safeStats.outstandingRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      icon: DollarSign,
+      tab: 'finance' as AdminTab
     },
     {
       label: 'TOTAL CLIENTS',
@@ -126,7 +132,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </div>
 
-      {/* 7 Core Business Metric Cards */}
+      {/* 8 Core Business Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {statCards.map((card, idx) => {
           const Icon = card.icon;
@@ -174,9 +180,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <span className="text-xs font-mono uppercase tracking-widest text-neutral-400">
                 LATEST INQUIRIES
               </span>
-              {stats.pendingInquiries > 0 && (
+              {safeStats.pendingInquiries > 0 && (
                 <span className="px-2 py-0.5 text-[10px] font-mono bg-red-950/80 text-red-300 border border-red-800/80">
-                  {stats.pendingInquiries} Pending
+                  {safeStats.pendingInquiries} Pending
                 </span>
               )}
             </div>

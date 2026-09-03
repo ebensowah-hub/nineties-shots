@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { changeAdminPassword } from '../../lib/api';
+import { changeAdminPassword, revokeAllAdminSessions } from '../../lib/api';
 import { CurrencyConverterTool } from './CurrencyConverterTool';
 import {
   Settings as SettingsIcon,
@@ -15,7 +15,8 @@ import {
   Save,
   Image as ImageIcon,
   DollarSign,
-  Globe
+  Globe,
+  LogOut
 } from 'lucide-react';
 
 interface AdminSettingsProps {
@@ -61,8 +62,34 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({ settings, onUpdate
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [updatingPassword, setUpdatingPassword] = useState(false);
 
+  // Session Revocation
+  const [revokingSessions, setRevokingSessions] = useState(false);
+  const [sessionSuccessMsg, setSessionSuccessMsg] = useState<string | null>(null);
+  const [sessionErrorMsg, setSessionErrorMsg] = useState<string | null>(null);
+
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  const handleRevokeSessions = async (keepCurrent: boolean) => {
+    setSessionErrorMsg(null);
+    setSessionSuccessMsg(null);
+    try {
+      setRevokingSessions(true);
+      const res = await revokeAllAdminSessions(keepCurrent);
+      setSessionSuccessMsg(res.message);
+      if (!keepCurrent) {
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } else {
+        setTimeout(() => setSessionSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      setSessionErrorMsg(err.message || 'Failed to revoke sessions');
+    } finally {
+      setRevokingSessions(false);
+    }
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -390,11 +417,64 @@ export const AdminSettings: React.FC<AdminSettingsProps> = ({ settings, onUpdate
             <button
               type="submit"
               disabled={updatingPassword}
-              className="px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs uppercase tracking-wider font-bold border border-neutral-700 transition-colors"
+              className="px-5 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs uppercase tracking-wider font-bold border border-neutral-700 transition-colors cursor-pointer disabled:opacity-50"
             >
               {updatingPassword ? 'Updating...' : 'Update Passphrase'}
             </button>
           </form>
+
+          {/* Active Sessions & Device Management */}
+          <div className="pt-6 border-t border-neutral-900 space-y-4">
+            <div>
+              <h3 className="text-xs font-mono uppercase font-bold text-white tracking-wider flex items-center gap-2">
+                <LogOut className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Session & Device Management</span>
+              </h3>
+              <p className="text-[11px] text-neutral-400 font-mono mt-1">
+                Revoke active access tokens across other browsers, devices, or locations.
+              </p>
+            </div>
+
+            {sessionSuccessMsg && (
+              <div className="p-3 bg-emerald-950/40 border border-emerald-800 text-emerald-300 text-xs font-mono flex items-center gap-2">
+                <Check className="w-4 h-4 shrink-0" />
+                <span>{sessionSuccessMsg}</span>
+              </div>
+            )}
+
+            {sessionErrorMsg && (
+              <div className="p-3 bg-red-950/40 border border-red-800 text-red-300 text-xs font-mono flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{sessionErrorMsg}</span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-3 pt-1">
+              <button
+                type="button"
+                disabled={revokingSessions}
+                onClick={() => handleRevokeSessions(true)}
+                className="px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-mono uppercase tracking-wider font-medium border border-neutral-800 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-2"
+              >
+                <LogOut className="w-3 h-3 text-neutral-400" />
+                <span>{revokingSessions ? 'Revoking...' : 'Log out other devices'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={revokingSessions}
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to log out of ALL devices, including this current session?')) {
+                    handleRevokeSessions(false);
+                  }
+                }}
+                className="px-4 py-2.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 text-xs font-mono uppercase tracking-wider font-medium border border-red-900/60 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-2"
+              >
+                <AlertCircle className="w-3 h-3 text-red-400" />
+                <span>{revokingSessions ? 'Revoking...' : 'Log out all devices'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

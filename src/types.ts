@@ -225,11 +225,98 @@ export interface AuditLog {
   actor?: string;
   adminUsername?: string;
   targetType?: string;
-  recordType?: 'inquiry' | 'booking' | 'client' | 'portfolio' | 'service' | 'settings' | 'auth';
+  recordType?: 'inquiry' | 'booking' | 'client' | 'portfolio' | 'service' | 'settings' | 'auth' | 'expense' | 'finance';
   targetId?: string;
   recordId?: string;
   details: any;
   timestamp: string;
+}
+
+export type ExpenseCategory =
+  | 'Equipment'
+  | 'Transport'
+  | 'Editing/software'
+  | 'Marketing'
+  | 'Studio/location'
+  | 'Staff/assistants'
+  | 'Other'
+  | (string & {});
+
+export type PaymentMethod =
+  | 'Mobile Money'
+  | 'Bank Transfer'
+  | 'Cash'
+  | 'Credit/Debit Card'
+  | 'Other'
+  | (string & {});
+
+export interface Expense {
+  id: string;
+  date: string; // YYYY-MM-DD
+  category: ExpenseCategory;
+  amount: number; // in GHS
+  description: string;
+  paymentMethod: PaymentMethod;
+  receiptRef?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface FinanceOverviewStats {
+  totalRevenue: number;
+  revenueThisMonth: number;
+  revenueThisYear: number;
+  totalExpenses: number;
+  expensesThisMonth: number;
+  expensesThisYear: number;
+  netIncome: number;
+  netIncomeThisMonth: number;
+  netIncomeThisYear: number;
+  outstandingPayments: number;
+  paidBookingsCount: number;
+  totalBookingsCount: number;
+  averageBookingValue: number;
+  depositRevenue: number;
+  finalPaymentRevenue: number;
+  additionalPaymentRevenue: number;
+  refundedTotal: number;
+}
+
+export interface FinancialTransaction {
+  id: string;
+  date: string;
+  type: 'booking_full' | 'deposit' | 'final_payment' | 'additional_payment' | 'refund' | 'expense';
+  typeLabel: string;
+  title: string;
+  clientOrPayee: string;
+  serviceOrCategory: string;
+  amount: number; // in GHS, positive for revenue, negative or positive depending on context (we display clearly with +/-)
+  status:
+    | 'Paid'
+    | 'Deposit Paid'
+    | 'Partially Paid'
+    | 'Pending'
+    | 'Refunded'
+    | 'Completed'
+    | 'Cancelled — Deposit Retained'
+    | 'Cancelled — Payment Retained'
+    | 'Cancelled';
+  paymentMethod: string;
+  notes?: string;
+  bookingId?: string;
+  bookingRef?: string;
+  expenseId?: string;
+}
+
+export interface FinanceAnalyticsData {
+  revenueOverTime: { date: string; revenue: number; expenses: number; netIncome: number }[];
+  monthlyRevenue: { month: string; monthLabel: string; revenue: number; expenses: number; netIncome: number }[];
+  revenueByService: { service: string; revenue: number; count: number; percentage: number }[];
+  expensesByCategory: { category: string; amount: number; count: number; percentage: number }[];
+  paidVsOutstanding: { name: string; value: number; count: number; color: string }[];
+  incomeComponents: { name: string; value: number; percentage: number; color: string }[];
 }
 
 export type AdminTab =
@@ -240,6 +327,7 @@ export type AdminTab =
   | 'clients'
   | 'portfolio'
   | 'services'
+  | 'finance'
   | 'analytics'
   | 'settings'
   | 'audit';

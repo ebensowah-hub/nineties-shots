@@ -11,7 +11,11 @@ import {
   AuditLog,
   InquiryStatus,
   BookingStatus,
-  PaymentStatus
+  PaymentStatus,
+  Expense,
+  FinanceOverviewStats,
+  FinancialTransaction,
+  FinanceAnalyticsData
 } from '../types';
 
 const TOKEN_STORAGE_KEY = 'ninetiesshots_admin_token';
@@ -202,6 +206,27 @@ export async function changeAdminPassword(
   const data = await res.json();
   if (data.token) {
     setStoredAdminToken(data.token, true);
+  }
+  return data;
+}
+
+export async function revokeAllAdminSessions(
+  keepCurrent: boolean = false
+): Promise<{ success: boolean; revokedCount: number; message: string }> {
+  const res = await fetch('/api/admin/sessions/revoke-all', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ keepCurrent })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to revoke sessions' }));
+    throw new Error(err.error || 'Failed to revoke sessions');
+  }
+
+  const data = await res.json();
+  if (!keepCurrent) {
+    clearStoredAdminToken();
   }
   return data;
 }
@@ -548,4 +573,132 @@ export async function clearConversionHistory(): Promise<void> {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error('Failed to clear conversion history');
+}
+
+// ==================== FINANCE & EXPENSES API ====================
+export async function getFinanceOverview(params?: {
+  timeRange?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<FinanceOverviewStats> {
+  const query = new URLSearchParams();
+  if (params?.timeRange) query.set('timeRange', params.timeRange);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+
+  const url = `/api/admin/finance/overview${query.toString() ? '?' + query.toString() : ''}`;
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch financial overview' }));
+    throw new Error(err.error || 'Failed to fetch financial overview');
+  }
+  return res.json();
+}
+
+export async function getFinanceAnalytics(params?: {
+  timeRange?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<FinanceAnalyticsData> {
+  const query = new URLSearchParams();
+  if (params?.timeRange) query.set('timeRange', params.timeRange);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+
+  const url = `/api/admin/finance/analytics${query.toString() ? '?' + query.toString() : ''}`;
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch financial analytics' }));
+    throw new Error(err.error || 'Failed to fetch financial analytics');
+  }
+  return res.json();
+}
+
+export async function getFinancialTransactions(params?: {
+  search?: string;
+  type?: string;
+  status?: string;
+  timeRange?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+}): Promise<FinancialTransaction[]> {
+  const query = new URLSearchParams();
+  if (params?.search) query.set('search', params.search);
+  if (params?.type) query.set('type', params.type);
+  if (params?.status) query.set('status', params.status);
+  if (params?.timeRange) query.set('timeRange', params.timeRange);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+  if (params?.limit) query.set('limit', String(params.limit));
+
+  const url = `/api/admin/finance/transactions${query.toString() ? '?' + query.toString() : ''}`;
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch financial transactions' }));
+    throw new Error(err.error || 'Failed to fetch financial transactions');
+  }
+  return res.json();
+}
+
+export async function getAdminExpenses(params?: {
+  category?: string;
+  search?: string;
+  timeRange?: string;
+  startDate?: string;
+  endDate?: string;
+  paymentMethod?: string;
+}): Promise<Expense[]> {
+  const query = new URLSearchParams();
+  if (params?.category) query.set('category', params.category);
+  if (params?.search) query.set('search', params.search);
+  if (params?.timeRange) query.set('timeRange', params.timeRange);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+  if (params?.paymentMethod) query.set('paymentMethod', params.paymentMethod);
+
+  const url = `/api/admin/expenses${query.toString() ? '?' + query.toString() : ''}`;
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to fetch expenses' }));
+    throw new Error(err.error || 'Failed to fetch expenses');
+  }
+  return res.json();
+}
+
+export async function createAdminExpense(data: Partial<Expense>): Promise<Expense> {
+  const res = await fetch('/api/admin/expenses', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to create expense' }));
+    throw new Error(err.error || 'Failed to create expense');
+  }
+  return res.json();
+}
+
+export async function updateAdminExpense(id: string, data: Partial<Expense>): Promise<Expense> {
+  const res = await fetch(`/api/admin/expenses/${id}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to update expense' }));
+    throw new Error(err.error || 'Failed to update expense');
+  }
+  return res.json();
+}
+
+export async function deleteAdminExpense(id: string): Promise<void> {
+  const res = await fetch(`/api/admin/expenses/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to delete expense' }));
+    throw new Error(err.error || 'Failed to delete expense');
+  }
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { AdminUser } from '../../types';
+import { AdminUser, AdminTab } from '../../types';
 import {
   LayoutDashboard,
   Inbox,
@@ -8,6 +8,7 @@ import {
   Users,
   Image as ImageIcon,
   Briefcase,
+  Wallet,
   BarChart3,
   Settings,
   History,
@@ -16,18 +17,6 @@ import {
   X,
   Camera
 } from 'lucide-react';
-
-export type AdminTab =
-  | 'dashboard'
-  | 'inquiries'
-  | 'bookings'
-  | 'calendar'
-  | 'clients'
-  | 'portfolio'
-  | 'services'
-  | 'analytics'
-  | 'settings'
-  | 'audit';
 
 interface AdminSidebarProps {
   currentTab: AdminTab;
@@ -60,7 +49,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
     { id: 'clients', label: 'Clients (CRM)', icon: Users },
     { id: 'portfolio', label: 'Portfolio', icon: ImageIcon },
     { id: 'services', label: 'Services', icon: Briefcase },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'finance', label: 'Finance & Income', icon: Wallet },
+    { id: 'analytics', label: 'Site Analytics', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },
     { id: 'audit', label: 'Activity Log', icon: History }
   ];

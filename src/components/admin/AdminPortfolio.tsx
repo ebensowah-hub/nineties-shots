@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { PortfolioItem, CategorySlug } from '../../types';
+import { uploadPortfolioImage } from '../../lib/api';
 import {
   Image as ImageIcon,
   PlusCircle,
@@ -14,7 +15,8 @@ import {
   Camera,
   X,
   Upload,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 
 interface AdminPortfolioProps {
@@ -56,6 +58,15 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
   const [formFeatured, setFormFeatured] = useState(true);
   const [formOrientation, setFormOrientation] = useState<'portrait' | 'landscape' | 'square'>('portrait');
 
+  // Image upload state
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
   // Base official categories + any custom categories added dynamically
   const baseCategories: { id: CategorySlug; name: string }[] = [
     { id: 'portraits', name: 'Portraits' },
@@ -87,6 +98,12 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     setFormTitle('');
     setFormCategory('portraits');
     setFormImage('');
+    setPreviewUrl(null);
+    setSelectedFileName(null);
+    setUploadError(null);
+    setUploadSuccess(false);
+    setIsUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setFormAlt('');
     setFormLocation('');
     setFormDate('2026');
@@ -105,6 +122,12 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     setFormTitle(item.title);
     setFormCategory(item.category);
     setFormImage(item.image);
+    setPreviewUrl(item.image);
+    setSelectedFileName(null);
+    setUploadError(null);
+    setUploadSuccess(true);
+    setIsUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setFormAlt(item.alt);
     setFormLocation(item.location || '');
     setFormDate(item.date || '2026');
@@ -118,9 +141,111 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     setFormOrientation(item.orientation || 'portrait');
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setUploadError('Invalid format. Only JPG, PNG, and WebP images are permitted.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      setUploadError('File size exceeds the 15MB limit.');
+      return;
+    }
+
+    setUploadError(null);
+    setUploadSuccess(false);
+    setSelectedFileName(file.name);
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    if (!formTitle.trim()) {
+      const generatedTitle = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+      setFormTitle(generatedTitle);
+    }
+
+    try {
+      setIsUploading(true);
+      const res = await uploadPortfolioImage(file);
+      setFormImage(res.url);
+      setUploadSuccess(true);
+      setIsUploading(false);
+    } catch (err: any) {
+      setIsUploading(false);
+      setUploadError(err.message || 'Failed to upload image. Please try again.');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setUploadError('Invalid format. Only JPG, PNG, and WebP images are permitted.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      setUploadError('File size exceeds the 15MB limit.');
+      return;
+    }
+
+    setUploadError(null);
+    setUploadSuccess(false);
+    setSelectedFileName(file.name);
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    if (!formTitle.trim()) {
+      const generatedTitle = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+      setFormTitle(generatedTitle);
+    }
+
+    try {
+      setIsUploading(true);
+      const res = await uploadPortfolioImage(file);
+      setFormImage(res.url);
+      setUploadSuccess(true);
+      setIsUploading(false);
+    } catch (err: any) {
+      setIsUploading(false);
+      setUploadError(err.message || 'Failed to upload image. Please try again.');
+    }
+  };
+
   const handleSavePhoto = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formImage.trim() || !formTitle.trim()) return;
+    if (!formImage.trim()) {
+      setUploadError('Please select or upload an image before publishing.');
+      return;
+    }
+    if (!formTitle.trim()) {
+      setUploadError('Please provide a photograph title.');
+      return;
+    }
 
     try {
       setActionLoading(true);
@@ -356,16 +481,135 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
             </div>
 
             <form onSubmit={handleSavePhoto} className="p-6 overflow-y-auto space-y-4 text-xs font-mono">
-              <div className="space-y-1">
-                <label className="text-[10px] text-neutral-400 uppercase">Image URL *</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-neutral-400 uppercase tracking-wider font-semibold">
+                    Photograph Image *
+                  </label>
+                  {formImage && (
+                    <span className="text-[9px] text-neutral-500 truncate max-w-[240px]" title={formImage}>
+                      Stored Ref: {formImage}
+                    </span>
+                  )}
+                </div>
+
                 <input
-                  type="url"
-                  required
-                  value={formImage}
-                  onChange={e => setFormImage(e.target.value)}
-                  placeholder="https://images.unsplash.com/..."
-                  className="w-full bg-neutral-900 border border-neutral-800 p-2.5 text-white"
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/jpg"
+                  className="hidden"
+                  onChange={handleFileSelect}
                 />
+
+                {previewUrl || formImage ? (
+                  <div className="relative border border-neutral-800 bg-neutral-950 p-2.5 group">
+                    <div className="relative aspect-[16/10] max-h-56 w-full overflow-hidden bg-black flex items-center justify-center">
+                      <img
+                        src={previewUrl || formImage}
+                        alt="Photograph Preview"
+                        className="w-full h-full object-contain"
+                      />
+                      {isUploading && (
+                        <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-white">
+                          <Loader2 className="w-6 h-6 animate-spin text-white" />
+                          <span className="text-[11px] tracking-wider uppercase">Uploading to Cloud Storage...</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-2.5 flex items-center justify-between gap-2 px-1">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        {uploadSuccess || formImage ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-sans">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            {uploadSuccess ? 'Uploaded to Storage' : 'Current Stored Photograph'}
+                          </span>
+                        ) : null}
+                        {selectedFileName && (
+                          <span className="text-[10px] text-neutral-400 truncate max-w-[160px]">
+                            {selectedFileName}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isUploading}
+                          className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white text-[10px] tracking-wider uppercase flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Upload className="w-3 h-3" />
+                          {editingPhoto ? 'Replace Image' : 'Upload Image'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormImage('');
+                            setPreviewUrl(null);
+                            setSelectedFileName(null);
+                            setUploadSuccess(false);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          disabled={isUploading}
+                          className="p-1.5 text-neutral-500 hover:text-red-400 transition-colors cursor-pointer"
+                          title="Clear Image"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
+                      isDragging
+                        ? 'border-white bg-neutral-850'
+                        : 'border-neutral-800 hover:border-neutral-600 bg-neutral-900/50'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-neutral-800 flex items-center justify-center text-neutral-300">
+                        <Upload className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fileInputRef.current?.click();
+                          }}
+                          className="px-4 py-2 bg-white text-black font-semibold text-xs uppercase tracking-wider hover:bg-neutral-200 transition-colors cursor-pointer"
+                        >
+                          Upload Image
+                        </button>
+                        <p className="text-[11px] text-neutral-400 mt-2">
+                          Select a photo from your device or drag & drop here
+                        </p>
+                        <p className="text-[9px] text-neutral-500 tracking-wider uppercase">
+                          JPG, PNG, WebP · Up to 15MB · Cloud Storage
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {uploadError && (
+                  <div className="p-2.5 bg-red-950/40 border border-red-800/60 text-red-300 text-[11px] flex items-center justify-between gap-2">
+                    <span>{uploadError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setUploadError(null)}
+                      className="text-red-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

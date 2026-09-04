@@ -449,6 +449,33 @@ export async function setPhotographerPortrait(url: string, alt?: string): Promis
   if (!res.ok) throw new Error('Failed to set photographer portrait');
 }
 
+export async function uploadPortfolioImage(file: File): Promise<{
+  url: string;
+  filename: string;
+  size: number;
+  mimeType: string;
+  storageProvider: string;
+}> {
+  const token = getStoredAdminToken();
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await fetch('/api/admin/portfolio/upload', {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(errorData.error || 'Failed to upload image');
+  }
+
+  return res.json();
+}
+
 // ==================== SERVICES ====================
 export async function getAdminServices(): Promise<{ services: ServiceItem[] }> {
   const res = await fetch('/api/admin/services', { headers: getAuthHeaders() });

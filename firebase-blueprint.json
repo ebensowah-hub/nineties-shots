@@ -1,0 +1,287 @@
+{
+  "entities": {
+    "Inquiry": {
+      "title": "Inquiry",
+      "description": "Prospective client photo session inquiry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "reference": { "type": "string" },
+        "clientName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "shootType": { "type": "string" },
+        "preferredDate": { "type": "string" },
+        "location": { "type": "string" },
+        "budgetRange": { "type": "string" },
+        "message": { "type": "string" },
+        "submittedAt": { "type": "string" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "clientId": { "type": "string" },
+        "convertedBookingId": { "type": "string" }
+      },
+      "required": ["id", "reference", "clientName", "email", "phone", "shootType", "submittedAt", "status"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Studio booking session and payment ledger",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingReference": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceTitle": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "location": { "type": "string" },
+        "quoteAmount": { "type": "number" },
+        "depositAmount": { "type": "number" },
+        "additionalPayment": { "type": "number" },
+        "finalPayment": { "type": "number" },
+        "refundAmount": { "type": "number" },
+        "totalPaid": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "bookingStatus": { "type": "string" },
+        "flaggedOverpayment": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "inquiryId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "bookingReference", "clientName", "date", "quoteAmount", "paymentStatus", "bookingStatus"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Studio CRM client record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "notes": { "type": "string" },
+        "inquiriesCount": { "type": "number" },
+        "bookingsCount": { "type": "number" },
+        "completedShootsCount": { "type": "number" },
+        "totalRevenue": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "phone"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Studio operational expenditure",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "receiptRef": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "date", "category", "amount", "description"]
+    },
+    "PortfolioItem": {
+      "title": "PortfolioItem",
+      "description": "Curated studio photography showcase work",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "categoryLabel": { "type": "string" },
+        "image": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "alt": { "type": "string" },
+        "location": { "type": "string" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "featured": { "type": "boolean" },
+        "orientation": { "type": "string" },
+        "aspectRatio": { "type": "string" },
+        "cameraSettings": { "type": "object" },
+        "isHero": { "type": "boolean" },
+        "isPublished": { "type": "boolean" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "title", "category", "image"]
+    },
+    "ServiceItem": {
+      "title": "ServiceItem",
+      "description": "Studio service tier and package",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "tagline": { "type": "string" },
+        "description": { "type": "string" },
+        "highlights": { "type": "array" },
+        "deliverables": { "type": "array" },
+        "sampleImage": { "type": "string" },
+        "priceAmount": { "type": "number" },
+        "quoteRangeText": { "type": "string" },
+        "isEnabled": { "type": "boolean" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "title", "category", "priceAmount"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Studio global configuration and metadata",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "whatsappDefaultMessage": { "type": "string" },
+        "email": { "type": "string" },
+        "location": { "type": "string" },
+        "availabilityNotice": { "type": "string" },
+        "heroImage": { "type": "string" },
+        "heroAlt": { "type": "string" },
+        "photographerPortrait": { "type": "string" },
+        "photographerPortraitAlt": { "type": "string" },
+        "socials": { "type": "array" }
+      }
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Studio administrative user credentials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "mustChangePassword": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["id", "username", "passwordHash"]
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Active admin session token",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" }
+      },
+      "required": ["token", "userId", "expiresAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Compliance audit entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "adminUsername": { "type": "string" },
+        "recordType": { "type": "string" },
+        "recordId": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "action", "timestamp"]
+    },
+    "AnalyticsEvent": {
+      "title": "AnalyticsEvent",
+      "description": "Telemetry event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "eventType": { "type": "string" },
+        "metadata": { "type": "object" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "eventType", "timestamp"]
+    },
+    "ConversionRecord": {
+      "title": "ConversionRecord",
+      "description": "Currency conversion historical audit record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "originalAmount": { "type": "number" },
+        "originalCurrency": { "type": "string" },
+        "exchangeRate": { "type": "number" },
+        "convertedAmount": { "type": "number" },
+        "convertedCurrency": { "type": "string" },
+        "rateType": { "type": "string" },
+        "provider": { "type": "string" },
+        "convertedAt": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "required": ["id", "originalAmount", "originalCurrency", "exchangeRate", "convertedAmount", "convertedAt"]
+    }
+  },
+  "firestore": {
+    "/inquiries/{inquiryId}": {
+      "schema": "Inquiry",
+      "description": "Public client shoot inquiries"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Studio photo shoot bookings and payments"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Client CRM records"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Studio business expenses"
+    },
+    "/portfolio/{portfolioId}": {
+      "schema": "PortfolioItem",
+      "description": "Curated photography portfolio projects"
+    },
+    "/services/{serviceId}": {
+      "schema": "ServiceItem",
+      "description": "Studio service offerings and tiers"
+    },
+    "/settings/{settingId}": {
+      "schema": "Settings",
+      "description": "Global studio settings (singleton doc: global)"
+    },
+    "/adminUsers/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Admin accounts"
+    },
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Admin bearer authentication sessions"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Admin audit log records"
+    },
+    "/analyticsEvents/{eventId}": {
+      "schema": "AnalyticsEvent",
+      "description": "Site analytics events"
+    },
+    "/conversionHistory/{conversionId}": {
+      "schema": "ConversionRecord",
+      "description": "Currency conversion logs"
+    }
+  }
+}

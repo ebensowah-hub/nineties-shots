@@ -9,20 +9,25 @@ if (!newPassword || newPassword.trim().length < 8) {
   process.exit(1);
 }
 
-try {
-  const success = db.resetAdminPassword(newPassword.trim(), 'admin');
-  if (success) {
-    console.log('\n======================================================================');
-    console.log('[NINETIES SHOTS] Admin password reset successfully.');
-    console.log('Username: admin');
-    console.log('All previous admin sessions have been revoked.');
-    console.log('======================================================================\n');
-    process.exit(0);
-  } else {
-    console.error('[ERROR] Failed to find administrator account to reset.');
+async function runReset() {
+  try {
+    await db.init();
+    const success = await db.resetAdminPassword(newPassword.trim(), 'admin');
+    if (success) {
+      console.log('\n======================================================================');
+      console.log('[NINETIES SHOTS] Admin password reset successfully.');
+      console.log('Username: admin');
+      console.log('All previous admin sessions have been revoked.');
+      console.log('======================================================================\n');
+      process.exit(0);
+    } else {
+      console.error('[ERROR] Failed to find administrator account to reset.');
+      process.exit(1);
+    }
+  } catch (err: any) {
+    console.error('[ERROR]', err.message);
     process.exit(1);
   }
-} catch (err: any) {
-  console.error('[ERROR]', err.message);
-  process.exit(1);
 }
+
+runReset();

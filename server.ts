@@ -1,9 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
+import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { db } from './src/server/db';
 import { AdminUser } from './src/types';
+import { uploadPortfolioImage, MAX_FILE_SIZE_BYTES } from './src/server/storageService';
 import {
   getLiveRateToGHS,
   getAllRatesToGHS,
@@ -28,9 +30,27 @@ async function startServer() {
   const parsedPort = parseInt(rawPort || '3000', 10);
   const PORT = !isNaN(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
 
+  // Initialize authoritative Firestore persistence
+  await db.init();
+
   // JSON payload parser
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+  // Static uploads directory for portfolio images
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  app.use('/uploads', express.static(uploadsDir));
+
+  // Multer memory storage configuration
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: MAX_FILE_SIZE_BYTES
+    }
+  });
 
   // Request logger for API routes
   app.use((req, res, next) => {
@@ -45,7 +65,7 @@ async function startServer() {
   });
 
   // ==================== AUTH MIDDLEWARE ====================
-  const requireAdminAuth = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+  const requireAdminAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     const authHeader = req.headers.authorization;
     let token = '';
 
@@ -60,7 +80,7 @@ async function startServer() {
       return;
     }
 
-    const adminUser = db.validateSession(token);
+    const adminUser = await db.validateSession(token);
     if (!adminUser) {
       res.status(401).json({ error: 'Unauthorized: Session invalid or expired. Please log in again.' });
       return;
@@ -85,9 +105,9 @@ async function startServer() {
 
   // ==================== PUBLIC API ENDPOINTS ====================
   // Production-grade health check that tests database readiness and static asset availability
-  app.get('/api/health', (req, res) => {
+  app.get('/api/health', async (req, res) => {
     try {
-      const dbHealthy = db.isHealthy();
+      const dbHealthy = await db.isHealthy();
       const isProd = process.env.NODE_ENV === 'production';
       const frontendReady = !isProd || fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
 
@@ -115,9 +135,9 @@ async function startServer() {
   });
 
   // Public Configuration
-  app.get('/api/public/config', (req, res) => {
+  app.get('/api/public/config', async (req, res) => {
     try {
-      const settings = db.getSettings();
+      const settings = await db.getSettings();
       res.json({
         brandName: settings.brandName,
         tagline: settings.tagline,
@@ -139,9 +159,9 @@ async function startServer() {
   });
 
   // Public Portfolio (Only Published)
-  app.get('/api/public/portfolio', (req, res) => {
+  app.get('/api/public/portfolio', async (req, res) => {
     try {
-      const items = db.getPortfolio(false);
+      const items = await db.getPortfolio(false);
       res.json(items);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to load portfolio' });
@@ -149,9 +169,9 @@ async function startServer() {
   });
 
   // Public Services (Only Enabled)
-  app.get('/api/public/services', (req, res) => {
+  app.get('/api/public/services', async (req, res) => {
     try {
-      const services = db.getServices(false);
+      const services = await db.getServices(false);
       res.json(services);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to load services' });
@@ -159,7 +179,7 @@ async function startServer() {
   });
 
   // Public Inquiry Submission
-  app.post('/api/inquiries', (req, res) => {
+  app.post(['/api/inquiries', '/api/public/inquire', '/api/inquire', '/api/contact'], async (req, res) => {
     try {
       const fullName = req.body.fullName || req.body.clientName || '';
       const email = req.body.email || '';
@@ -177,7 +197,7 @@ async function startServer() {
         return;
       }
 
-      const inquiry = db.createInquiry({
+      const inquiry = await db.createInquiry({
         fullName: String(fullName).trim().slice(0, 150),
         email: String(email).trim().slice(0, 150),
         phoneOrWhatsapp: String(phoneOrWhatsapp).trim().slice(0, 50),
@@ -201,14 +221,14 @@ async function startServer() {
   });
 
   // First-party Privacy Analytics Event
-  app.post('/api/analytics/event', (req, res) => {
+  app.post('/api/analytics/event', async (req, res) => {
     try {
       const { eventType, path: eventPath, target, metadata } = req.body;
       if (!eventType) {
         res.status(400).json({ error: 'Missing eventType' });
         return;
       }
-      db.recordAnalyticsEvent({
+      await db.recordAnalyticsEvent({
         eventType,
         path: eventPath,
         target,
@@ -221,7 +241,7 @@ async function startServer() {
   });
 
   // ==================== ADMIN AUTH ENDPOINTS ====================
-  app.post('/api/admin/login', (req, res) => {
+  app.post('/api/admin/login', async (req, res) => {
     try {
       const { username, password } = req.body;
       const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
@@ -235,7 +255,7 @@ async function startServer() {
       const rateLimit = checkLoginRateLimit(clientIp, String(username));
       if (!rateLimit.allowed) {
         if (rateLimit.isAccountLockout) {
-          db.addAuditLog(
+          await db.addAuditLog(
             'Account Locked',
             String(username),
             'auth',
@@ -243,7 +263,7 @@ async function startServer() {
             `Account locked due to exceeding failure threshold (15 attempts/hour) across networks.`
           );
         } else {
-          db.addAuditLog(
+          await db.addAuditLog(
             'Failed Login Rate Limit',
             String(username),
             'auth',
@@ -259,11 +279,11 @@ async function startServer() {
         return;
       }
 
-      const auth = db.authenticateAdmin(String(username), String(password));
-      if (!auth) {
+      const auth = await db.authenticateAdmin(String(username), String(password));
+      if (!auth.success) {
         // Record failed attempt
         const { isNowLocked } = recordFailedLogin(clientIp, String(username));
-        db.addAuditLog(
+        await db.addAuditLog(
           'Failed Login Attempt',
           String(username),
           'auth',
@@ -272,7 +292,7 @@ async function startServer() {
         );
 
         if (isNowLocked) {
-          db.addAuditLog(
+          await db.addAuditLog(
             'Account Locked',
             String(username),
             'auth',
@@ -281,7 +301,7 @@ async function startServer() {
           );
         }
 
-        res.status(401).json({ error: 'Invalid username or password' });
+        res.status(401).json({ error: auth.error || 'Invalid username or password' });
         return;
       }
 
@@ -299,7 +319,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/logout', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/logout', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     const authHeader = req.headers.authorization;
     let token = '';
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -309,44 +329,23 @@ async function startServer() {
     }
 
     if (token) {
-      db.deleteSession(token);
+      await db.deleteSession(token);
     }
     res.json({ success: true, message: 'Logged out successfully' });
   });
 
   // Revoke all sessions
-  app.post('/api/admin/sessions/revoke-all', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/sessions/revoke-all', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const keepCurrent = Boolean(req.body?.keepCurrent);
-      const authHeader = req.headers.authorization;
-      let currentToken = '';
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        currentToken = authHeader.substring(7).trim();
-      } else if (req.headers['x-admin-token']) {
-        currentToken = String(req.headers['x-admin-token']).trim();
-      }
-
-      const revokedCount = db.revokeAllSessions(
+      const revokedCount = await db.revokeAllSessions(
         req.adminUser!.id,
-        keepCurrent ? currentToken : undefined
-      );
-
-      db.addAuditLog(
-        'Revoke All Sessions',
-        req.adminUser!.username,
-        'auth',
-        req.adminUser!.id,
-        keepCurrent
-          ? `Revoked ${revokedCount} other active sessions (kept current session)`
-          : `Revoked all ${revokedCount} active sessions for this account`
+        req.adminUser!.username
       );
 
       res.json({
         success: true,
         revokedCount,
-        message: keepCurrent
-          ? `Successfully revoked ${revokedCount} other active sessions.`
-          : 'All active sessions have been revoked.'
+        message: 'All active sessions have been revoked.'
       });
     } catch (err: any) {
       console.error('Error revoking sessions:', err);
@@ -358,7 +357,7 @@ async function startServer() {
     res.json({ user: req.adminUser });
   });
 
-  app.post('/api/admin/change-password', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/change-password', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
       if (!currentPassword || !newPassword) {
@@ -371,7 +370,7 @@ async function startServer() {
         return;
       }
 
-      const result = db.updateAdminPassword(
+      const result = await db.updateAdminPassword(
         req.adminUser!.id,
         String(currentPassword),
         String(newPassword),
@@ -396,11 +395,16 @@ async function startServer() {
 
   // ==================== ADMIN PROTECTED CRUD ====================
   // Dashboard Overview
-  app.get('/api/admin/dashboard', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/dashboard', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const stats = db.getDashboardStats();
-      const recentInquiries = db.getInquiries().slice(0, 5);
-      const upcomingBookings = db.getBookings()
+      const [stats, inquiries, bookings] = await Promise.all([
+        db.getDashboardStats(),
+        db.getInquiries(),
+        db.getBookings()
+      ]);
+
+      const recentInquiries = inquiries.slice(0, 5);
+      const upcomingBookings = bookings
         .filter(b => b.bookingStatus !== 'Cancelled')
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         .slice(0, 5);
@@ -416,15 +420,15 @@ async function startServer() {
   });
 
   // Inquiries Management
-  app.get('/api/admin/inquiries', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/inquiries', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     const search = req.query.search as string;
     const status = req.query.status as string;
-    const inquiries = db.getInquiries(search, status);
+    const inquiries = await db.getInquiries(search, status);
     res.json(inquiries);
   });
 
-  app.get('/api/admin/inquiries/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const inquiry = db.getInquiryById(req.params.id);
+  app.get('/api/admin/inquiries/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const inquiry = await db.getInquiryById(req.params.id);
     if (!inquiry) {
       res.status(404).json({ error: 'Inquiry not found' });
       return;
@@ -432,9 +436,9 @@ async function startServer() {
     res.json(inquiry);
   });
 
-  app.patch('/api/admin/inquiries/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/inquiries/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateInquiry(req.params.id, req.body, req.adminUser!.username);
+      const updated = await db.updateInquiry(req.params.id, req.body, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Inquiry not found' });
         return;
@@ -445,9 +449,9 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/inquiries/:id/convert-booking', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/inquiries/:id/convert-booking', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const inquiry = db.getInquiryById(req.params.id);
+      const inquiry = await db.getInquiryById(req.params.id);
       if (!inquiry) {
         res.status(404).json({ error: 'Inquiry not found' });
         return;
@@ -463,7 +467,7 @@ async function startServer() {
         return;
       }
 
-      const booking = db.createBooking({
+      const booking = await db.createBooking({
         inquiryId: inquiry.id,
         clientName: inquiry.clientName,
         clientEmail: inquiry.email,
@@ -488,8 +492,8 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/inquiries/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const success = db.deleteInquiry(req.params.id, req.adminUser!.username);
+  app.delete('/api/admin/inquiries/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const success = await db.deleteInquiry(req.params.id, req.adminUser!.username);
     if (!success) {
       res.status(404).json({ error: 'Inquiry not found' });
       return;
@@ -498,14 +502,14 @@ async function startServer() {
   });
 
   // Bookings Management
-  app.get('/api/admin/bookings', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/bookings', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     const search = req.query.search as string;
     const status = req.query.status as string;
-    const bookings = db.getBookings(search, status);
+    const bookings = await db.getBookings(search, status);
     res.json(bookings);
   });
 
-  app.post('/api/admin/bookings', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/bookings', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       // Financial validation
       const finValidation = validateFinancialFields(req.body);
@@ -522,15 +526,15 @@ async function startServer() {
         ...finValidation.sanitized
       };
 
-      const booking = db.createBooking(payload, req.adminUser!.username);
+      const booking = await db.createBooking(payload, req.adminUser!.username);
       res.status(201).json(booking);
     } catch (err) {
       res.status(500).json({ error: 'Failed to create booking' });
     }
   });
 
-  app.get('/api/admin/bookings/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const booking = db.getBookingById(req.params.id);
+  app.get('/api/admin/bookings/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const booking = await db.getBookingById(req.params.id);
     if (!booking) {
       res.status(404).json({ error: 'Booking not found' });
       return;
@@ -538,9 +542,9 @@ async function startServer() {
     res.json(booking);
   });
 
-  app.patch('/api/admin/bookings/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/bookings/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const existing = db.getBookingById(req.params.id);
+      const existing = await db.getBookingById(req.params.id);
       if (!existing) {
         res.status(404).json({ error: 'Booking not found' });
         return;
@@ -571,7 +575,7 @@ async function startServer() {
         ...finValidation.sanitized
       };
 
-      const updated = db.updateBooking(req.params.id, updates, req.adminUser!.username);
+      const updated = await db.updateBooking(req.params.id, updates, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Booking not found' });
         return;
@@ -582,8 +586,8 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/bookings/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const success = db.deleteBooking(req.params.id, req.adminUser!.username);
+  app.delete('/api/admin/bookings/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const success = await db.deleteBooking(req.params.id, req.adminUser!.username);
     if (!success) {
       res.status(404).json({ error: 'Booking not found' });
       return;
@@ -592,14 +596,14 @@ async function startServer() {
   });
 
   // Clients CRM
-  app.get('/api/admin/clients', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/clients', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     const search = req.query.search as string;
-    const clients = db.getClients(search);
+    const clients = await db.getClients(search);
     res.json(clients);
   });
 
-  app.get('/api/admin/clients/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const clientData = db.getClientById(req.params.id);
+  app.get('/api/admin/clients/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const clientData = await db.getClientById(req.params.id);
     if (!clientData) {
       res.status(404).json({ error: 'Client not found' });
       return;
@@ -607,9 +611,9 @@ async function startServer() {
     res.json(clientData);
   });
 
-  app.patch('/api/admin/clients/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/clients/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateClient(req.params.id, req.body, req.adminUser!.username);
+      const updated = await db.updateClient(req.params.id, req.body, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Client not found' });
         return;
@@ -621,23 +625,23 @@ async function startServer() {
   });
 
   // Portfolio Management
-  app.get('/api/admin/portfolio', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const portfolio = db.getPortfolio(true);
+  app.get('/api/admin/portfolio', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const portfolio = await db.getPortfolio(true);
     res.json(portfolio);
   });
 
-  app.post('/api/admin/portfolio', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/portfolio', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const item = db.addPortfolioItem(req.body, req.adminUser!.username);
-      res.status(201).json(item);
+      const item = await db.addPortfolioItem(req.body, req.adminUser!.username);
+      res.status(200).json(item);
     } catch (err) {
       res.status(500).json({ error: 'Failed to add portfolio item' });
     }
   });
 
-  app.patch('/api/admin/portfolio/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/portfolio/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updatePortfolioItem(req.params.id, req.body, req.adminUser!.username);
+      const updated = await db.updatePortfolioItem(req.params.id, req.body, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Portfolio item not found' });
         return;
@@ -648,8 +652,8 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/portfolio/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const success = db.deletePortfolioItem(req.params.id, req.adminUser!.username);
+  app.delete('/api/admin/portfolio/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const success = await db.deletePortfolioItem(req.params.id, req.adminUser!.username);
     if (!success) {
       res.status(404).json({ error: 'Portfolio item not found' });
       return;
@@ -657,8 +661,8 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/admin/portfolio/:id/set-hero', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const success = db.setHeroImage(req.params.id, req.adminUser!.username);
+  app.post('/api/admin/portfolio/:id/set-hero', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const success = await db.setHeroImage(req.params.id, req.adminUser!.username);
     if (!success) {
       res.status(404).json({ error: 'Portfolio item not found' });
       return;
@@ -666,34 +670,99 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post('/api/admin/portfolio/portrait', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/portfolio/portrait', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     const { url, alt } = req.body;
     if (!url) {
       res.status(400).json({ error: 'Portrait image URL is required' });
       return;
     }
-    const success = db.setPhotographerPortrait(url, alt || 'NINETIES SHOTS Photographer Portrait', req.adminUser!.username);
+    const success = await db.setPhotographerPortrait(url, alt || 'NINETIES SHOTS Photographer Portrait', req.adminUser!.username);
     res.json({ success });
   });
 
+  // Portfolio Image Upload (Authenticated Admins Only)
+  app.post(
+    '/api/admin/portfolio/upload',
+    requireAdminAuth,
+    (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+      upload.single('image')(req, res, (err: any) => {
+        if (err) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            res.status(400).json({ error: 'File size exceeds the maximum limit of 15MB.' });
+            return;
+          }
+          res.status(400).json({ error: err.message || 'File upload failed.' });
+          return;
+        }
+        next();
+      });
+    },
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        let buffer: Buffer | null = null;
+        let originalName = 'upload.jpg';
+        let mimeType: string | undefined = undefined;
+
+        if (req.file) {
+          buffer = req.file.buffer;
+          originalName = req.file.originalname;
+          mimeType = req.file.mimetype;
+        } else if (req.body?.data || req.body?.image) {
+          const raw = String(req.body.data || req.body.image);
+          const base64Data = raw.includes(';base64,') ? raw.split(';base64,')[1] : raw;
+          buffer = Buffer.from(base64Data, 'base64');
+          originalName = req.body.filename || req.body.name || 'upload.jpg';
+          mimeType = req.body.mimeType || req.body.type;
+        }
+
+        if (!buffer || buffer.length === 0) {
+          res.status(400).json({ error: 'No image file provided. Please select an image to upload.' });
+          return;
+        }
+
+        const result = await uploadPortfolioImage(buffer, originalName, mimeType);
+
+        await db.addAuditLog(
+          'Portfolio Image Uploaded',
+          req.adminUser!.username,
+          'portfolio',
+          result.filename,
+          `Image uploaded: ${result.filename} (${Math.round(result.size / 1024)} KB, ${result.storageProvider})`
+        );
+
+        res.status(200).json({
+          success: true,
+          url: result.url,
+          filename: result.filename,
+          size: result.size,
+          mimeType: result.mimeType,
+          storageProvider: result.storageProvider
+        });
+      } catch (err: any) {
+        console.error('[PORTFOLIO UPLOAD ERROR]', err.message);
+        res.status(400).json({ error: err.message || 'Failed to process image upload.' });
+      }
+    }
+  );
+
   // Services Management
-  app.get('/api/admin/services', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const services = db.getServices(true);
+  app.get('/api/admin/services', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const services = await db.getServices(true);
     res.json(services);
   });
 
-  app.post('/api/admin/services', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/services', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const srv = db.addService(req.body, req.adminUser!.username);
+      const srv = await db.addService(req.body, req.adminUser!.username);
       res.status(201).json(srv);
     } catch (err) {
       res.status(500).json({ error: 'Failed to add service' });
     }
   });
 
-  app.patch('/api/admin/services/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/services/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateService(req.params.id, req.body, req.adminUser!.username);
+      const updated = await db.updateService(req.params.id, req.body, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Service not found' });
         return;
@@ -704,8 +773,8 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/services/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const success = db.deleteService(req.params.id, req.adminUser!.username);
+  app.delete('/api/admin/services/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const success = await db.deleteService(req.params.id, req.adminUser!.username);
     if (!success) {
       res.status(404).json({ error: 'Service not found' });
       return;
@@ -714,13 +783,13 @@ async function startServer() {
   });
 
   // Settings Management
-  app.get('/api/admin/settings', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    res.json(db.getSettings());
+  app.get('/api/admin/settings', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    res.json(await db.getSettings());
   });
 
-  app.patch('/api/admin/settings', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/settings', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateSettings(req.body, req.adminUser!.username);
+      const updated = await db.updateSettings(req.body, req.adminUser!.username);
       res.json(updated);
     } catch (err) {
       res.status(500).json({ error: 'Failed to update settings' });
@@ -728,22 +797,22 @@ async function startServer() {
   });
 
   // Analytics & Audit Logs
-  app.get('/api/admin/analytics', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    res.json(db.getAnalyticsSummary());
+  app.get('/api/admin/analytics', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    res.json(await db.getAnalyticsSummary());
   });
 
-  app.get('/api/admin/audit-logs', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    res.json(db.getAuditLogs());
+  app.get('/api/admin/audit-logs', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    res.json(await db.getAuditLogs());
   });
 
   // ==================== FINANCE & EXPENSES ENDPOINTS ====================
   // 1. Financial Overview Summary
-  app.get('/api/admin/finance/overview', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/finance/overview', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const timeRange = (req.query.timeRange as string) || 'all';
       const startDate = req.query.startDate as string;
       const endDate = req.query.endDate as string;
-      const overview = db.getFinanceOverview(timeRange, startDate, endDate);
+      const overview = await db.getFinanceOverview(timeRange, startDate, endDate);
       res.json(overview);
     } catch (err) {
       console.error('Error fetching financial overview:', err);
@@ -752,12 +821,12 @@ async function startServer() {
   });
 
   // 2. Financial Analytics Charts Data
-  app.get('/api/admin/finance/analytics', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/finance/analytics', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const timeRange = (req.query.timeRange as string) || 'this_year';
       const startDate = req.query.startDate as string;
       const endDate = req.query.endDate as string;
-      const analytics = db.getFinanceAnalytics(timeRange, startDate, endDate);
+      const analytics = await db.getFinanceAnalytics(timeRange, startDate, endDate);
       res.json(analytics);
     } catch (err) {
       console.error('Error fetching financial analytics:', err);
@@ -766,7 +835,7 @@ async function startServer() {
   });
 
   // 3. Unified Financial Transactions Ledger
-  app.get('/api/admin/finance/transactions', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/finance/transactions', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const search = req.query.search as string;
       const type = req.query.type as string;
@@ -776,7 +845,7 @@ async function startServer() {
       const endDate = req.query.endDate as string;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
-      const transactions = db.getFinancialTransactions({
+      const transactions = await db.getFinancialTransactions({
         search,
         type,
         status,
@@ -793,7 +862,7 @@ async function startServer() {
   });
 
   // 4. Expenses CRUD
-  app.get('/api/admin/expenses', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/expenses', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const category = req.query.category as string;
       const search = req.query.search as string;
@@ -802,7 +871,7 @@ async function startServer() {
       const endDate = req.query.endDate as string;
       const paymentMethod = req.query.paymentMethod as string;
 
-      const expenses = db.getExpenses({
+      const expenses = await db.getExpenses({
         category,
         search,
         timeRange,
@@ -817,7 +886,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/expenses', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/expenses', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const { amount, description, category, date, paymentMethod, receiptRef, notes } = req.body;
 
@@ -830,7 +899,7 @@ async function startServer() {
         return;
       }
 
-      const expense = db.createExpense(
+      const expense = await db.createExpense(
         {
           amount: Number(amount),
           description: description.trim(),
@@ -850,8 +919,8 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
-    const expense = db.getExpenseById(req.params.id);
+  app.get('/api/admin/expenses/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    const expense = await db.getExpenseById(req.params.id);
     if (!expense) {
       res.status(404).json({ error: 'Expense record not found' });
       return;
@@ -859,7 +928,7 @@ async function startServer() {
     res.json(expense);
   });
 
-  app.put('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.put('/api/admin/expenses/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const { amount, description, category, date, paymentMethod, receiptRef, notes } = req.body;
 
@@ -868,7 +937,7 @@ async function startServer() {
         return;
       }
 
-      const updated = db.updateExpense(
+      const updated = await db.updateExpense(
         req.params.id,
         {
           amount: amount !== undefined ? Number(amount) : undefined,
@@ -893,9 +962,9 @@ async function startServer() {
     }
   });
 
-  app.patch('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.patch('/api/admin/expenses/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const updated = db.updateExpense(req.params.id, req.body, req.adminUser!.username);
+      const updated = await db.updateExpense(req.params.id, req.body, req.adminUser!.username);
       if (!updated) {
         res.status(404).json({ error: 'Expense record not found' });
         return;
@@ -907,9 +976,9 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/expenses/:id', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.delete('/api/admin/expenses/:id', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const success = db.deleteExpense(req.params.id, req.adminUser!.username);
+      const success = await db.deleteExpense(req.params.id, req.adminUser!.username);
       if (!success) {
         res.status(404).json({ error: 'Expense record not found' });
         return;
@@ -977,7 +1046,7 @@ async function startServer() {
         rateType = 'manual';
         provider = 'Manual Admin Override';
 
-        // Step 5: Check deviation against live market reference rate
+        // Check deviation against live market reference rate
         try {
           const liveInfo = await getLiveRateToGHS(currencyCode);
           if (liveInfo.success && liveInfo.rate && liveInfo.rate > 0) {
@@ -1019,7 +1088,7 @@ async function startServer() {
       ].filter(Boolean).join(' ') || undefined;
 
       // Save conversion history record
-      const record = db.addConversionRecord(
+      const record = await db.addConversionRecord(
         {
           originalAmount: numAmount,
           originalCurrency: currencyCode,
@@ -1049,9 +1118,9 @@ async function startServer() {
   });
 
   // Get conversion history
-  app.get('/api/admin/currency/history', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.get('/api/admin/currency/history', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const history = db.getConversionHistory(50);
+      const history = await db.getConversionHistory(50);
       res.json(history);
     } catch (err) {
       res.status(500).json({ error: 'Failed to retrieve conversion history.' });
@@ -1059,9 +1128,9 @@ async function startServer() {
   });
 
   // Clear conversion history
-  app.post('/api/admin/currency/history/clear', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+  app.post('/api/admin/currency/history/clear', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      db.clearConversionHistory(req.adminUser!.username);
+      await db.clearConversionHistory(req.adminUser!.username);
       res.json({ success: true, message: 'Conversion history cleared.' });
     } catch (err) {
       res.status(500).json({ error: 'Failed to clear conversion history.' });
@@ -1102,9 +1171,10 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', async () => {
+    const dbHealthy = await db.isHealthy();
     console.log(`[NINETIES SHOTS] Server running on http://0.0.0.0:${PORT}`);
-    console.log(`[NINETIES SHOTS] Subsystem status: Environment=${process.env.NODE_ENV || 'development'}, Database=${db.isHealthy() ? 'OK' : 'DEGRADED'}`);
+    console.log(`[NINETIES SHOTS] Subsystem status: Environment=${process.env.NODE_ENV || 'development'}, Database=${dbHealthy ? 'OK' : 'DEGRADED'}`);
   });
 
   server.on('error', (err: any) => {

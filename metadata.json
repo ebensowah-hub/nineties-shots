@@ -1,6 +1,6 @@
 {
   "name": "NINETIES SHOTS",
-  "description": "Official website and editorial photography portfolio for NINETIES SHOTS.",
+  "description": "Official photography portfolio of NINETIES SHOTS. Cinematic, raw, modern, and authentic visual storytelling.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

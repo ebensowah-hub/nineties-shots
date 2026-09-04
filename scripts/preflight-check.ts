@@ -114,8 +114,8 @@ async function runPreflight() {
     serverLogs += text;
   });
 
-  // Wait 1.5 seconds for startup
-  await new Promise((r) => setTimeout(r, 1500));
+  // Wait up to 3.5 seconds for startup and Firestore connection
+  await new Promise((r) => setTimeout(r, 3500));
 
   try {
     // A. Health check

@@ -2,6 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import {
+  getFirestore,
+  Firestore,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  writeBatch
+} from 'firebase/firestore';
+
 import {
   Inquiry,
   InquiryFormData,
@@ -70,17 +86,18 @@ export interface DatabaseSchema {
   conversionHistory: CurrencyConversionRecord[];
 }
 
-const DATA_DIR = process.env.DATA_DIR_PATH || path.join(process.cwd(), 'data');
-const DB_FILE = process.env.DB_FILE_PATH || path.join(DATA_DIR, 'ninetiesshots_db.json');
-const AUDIT_ARCHIVE_FILE = path.join(DATA_DIR, 'ninetiesshots_audit_archive.jsonl');
-
-// Ensure data folder exists safely without throwing on read-only environments
-try {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+function sanitizeForFirestore<T extends Record<string, any>>(obj: T): T {
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        result[key] = sanitizeForFirestore(value);
+      } else {
+        result[key] = value;
+      }
+    }
   }
-} catch (err) {
-  console.warn('[DB] Warning: Could not create data directory:', err);
+  return result;
 }
 
 function generateReference(prefix: string = 'NS'): string {
@@ -154,221 +171,218 @@ export function isDateInRange(dateStr: string, startDate?: string, endDate?: str
   return true;
 }
 
-function generateInitialAdmin(): StoredAdminUser {
-  const envPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
-  const envUsername = process.env.ADMIN_USERNAME?.trim() || 'admin';
-  let plainPassword = '';
-  let generated = false;
-
-  if (envPassword && envPassword.length >= 8) {
-    plainPassword = envPassword;
-  } else {
-    // Generate high-entropy, human-friendly random password with minimum 64 bits of entropy
-    plainPassword = `NS-${crypto.randomBytes(6).toString('hex')}`;
-    generated = true;
-  }
-
-  const salt = bcrypt.genSaltSync(10);
-  const defaultPasswordHash = bcrypt.hashSync(plainPassword, salt);
-
-  if (generated) {
-    console.log('\n' + '='.repeat(72));
-    console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED');
-    console.log(`Username: ${envUsername}`);
-    console.log(`Initial Password: ${plainPassword}`);
-    console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
-    console.log('='.repeat(72) + '\n');
-  }
-
+function getDefaultSettings(): DatabaseSchema['settings'] {
   return {
-    id: 'admin_1',
-    username: envUsername,
-    name: 'Nineties Shots Admin',
-    role: 'owner',
-    passwordHash: defaultPasswordHash,
-    mustChangePassword: true,
-    createdAt: new Date().toISOString()
-  };
-}
-
-function getInitialData(isFirstSetup: boolean = true): DatabaseSchema {
-  const initialAdmin = isFirstSetup ? generateInitialAdmin() : null;
-
-  const initialPortfolio = defaultPortfolioItems.map((item, index) => ({
-    ...item,
-    isHero: item.image === defaultHero.url,
-    isPublished: true,
-    order: index
-  }));
-
-  const initialServices = defaultServices.map((service, index) => ({
-    ...service,
-    isEnabled: true,
-    order: index,
-    quoteRangeText: 'Custom Commission Scoping'
-  }));
-
-  return {
-    adminUsers: initialAdmin ? [initialAdmin] : [],
-    sessions: [],
-    inquiries: [],
-    bookings: [],
-    clients: [],
-    expenses: [],
-    portfolio: initialPortfolio,
-    services: initialServices,
-    settings: {
-      brandName: defaultSiteConfig.brandName,
-      tagline: defaultSiteConfig.tagline,
-      phone: defaultSiteConfig.contact.phone || '020 806 6924',
-      whatsappNumber: defaultSiteConfig.contact.whatsappNumber || '+233208066924',
-      whatsappDefaultMessage: defaultSiteConfig.contact.whatsappDefaultMessage,
-      email: defaultSiteConfig.contact.email || '',
-      location: defaultSiteConfig.contact.location,
-      availabilityNotice: defaultSiteConfig.contact.availabilityNotice,
-      heroImage: defaultHero.url,
-      heroAlt: defaultHero.alt,
-      photographerPortrait: defaultPortrait.url,
-      photographerPortraitAlt: defaultPortrait.alt,
-      socials: defaultSiteConfig.socials
-    },
-    analyticsEvents: [],
-    auditLogs: [
-      {
-        id: `audit_${Date.now()}`,
-        action: 'System Initialized',
-        adminUsername: 'system',
-        recordType: 'settings',
-        details: 'Initial NINETIES SHOTS production database loaded',
-        timestamp: new Date().toISOString()
-      }
-    ],
-    conversionHistory: []
+    brandName: defaultSiteConfig.brandName,
+    tagline: defaultSiteConfig.tagline,
+    phone: defaultSiteConfig.contact.phone || '020 806 6924',
+    whatsappNumber: defaultSiteConfig.contact.whatsappNumber || '+233208066924',
+    whatsappDefaultMessage: defaultSiteConfig.contact.whatsappDefaultMessage,
+    email: defaultSiteConfig.contact.email || '',
+    location: defaultSiteConfig.contact.location,
+    availabilityNotice: defaultSiteConfig.contact.availabilityNotice,
+    heroImage: defaultHero.url,
+    heroAlt: defaultHero.alt,
+    photographerPortrait: defaultPortrait.url,
+    photographerPortraitAlt: defaultPortrait.alt,
+    socials: defaultSiteConfig.socials
   };
 }
 
 class Database {
-  private data: DatabaseSchema;
+  private firestore: Firestore | null = null;
+  private app: FirebaseApp | null = null;
+  private initialized: boolean = false;
 
   constructor() {
-    this.data = this.load();
+    this.setupFirebase();
   }
 
-  private load(): DatabaseSchema {
-    if (fs.existsSync(DB_FILE)) {
-      try {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        
-        // If database already exists and has admin users, preserve existing admin credentials
-        const existingAdmins: StoredAdminUser[] = Array.isArray(parsed.adminUsers) && parsed.adminUsers.length > 0
-          ? parsed.adminUsers.map((a: any) => ({
-              ...a,
-              mustChangePassword: a.mustChangePassword !== undefined ? Boolean(a.mustChangePassword) : false
-            }))
-          : [generateInitialAdmin()];
-
-        // Secure credential synchronization / reset via environment variable
-        const envResetPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
-        const envAdminUsername = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
-
-        if (envResetPassword && envResetPassword.length >= 8) {
-          let targetAdmin = existingAdmins.find(a => a.username.toLowerCase() === envAdminUsername);
-          if (!targetAdmin && existingAdmins.length > 0) {
-            targetAdmin = existingAdmins[0];
-          }
-
-          if (targetAdmin) {
-            const isMatch = bcrypt.compareSync(envResetPassword, targetAdmin.passwordHash);
-            if (!isMatch) {
-              const salt = bcrypt.genSaltSync(10);
-              targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
-              targetAdmin.mustChangePassword = true;
-              console.log(`[NINETIES SHOTS] Admin password for "${targetAdmin.username}" securely updated via environment configuration.`);
-            }
-          }
+  private setupFirebase(): void {
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        this.app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+        this.firestore = getFirestore(this.app, config.firestoreDatabaseId);
+      } else {
+        const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT;
+        if (projectId) {
+          const config = { projectId, firestoreDatabaseId: '(default)' };
+          this.app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+          this.firestore = getFirestore(this.app, config.firestoreDatabaseId);
         }
-
-        const loaded: DatabaseSchema = {
-          ...parsed,
-          adminUsers: existingAdmins,
-          // CRITICAL: Invalidate all stored active sessions on load to treat existing sessions as revoked
-          sessions: [],
-          settings: { ...(getInitialData(false).settings), ...(parsed.settings || {}) },
-          portfolio: Array.isArray(parsed.portfolio) && parsed.portfolio.length > 0 ? parsed.portfolio : getInitialData(false).portfolio,
-          services: Array.isArray(parsed.services) && parsed.services.length > 0 ? parsed.services : getInitialData(false).services,
-          inquiries: Array.isArray(parsed.inquiries) ? parsed.inquiries : [],
-          bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
-          clients: Array.isArray(parsed.clients) ? parsed.clients : [],
-          expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
-          analyticsEvents: Array.isArray(parsed.analyticsEvents) ? parsed.analyticsEvents : [],
-          auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [],
-          conversionHistory: Array.isArray(parsed.conversionHistory) ? parsed.conversionHistory : []
-        };
-        
-        // Immediately persist invalidated sessions and structure
-        this.saveDirect(loaded);
-        return loaded;
-      } catch (err) {
-        console.error('Error loading database file, initializing fresh:', err);
-        const init = getInitialData(true);
-        this.saveDirect(init);
-        return init;
       }
-    } else {
-      const init = getInitialData(true);
-      this.saveDirect(init);
-      return init;
-    }
-  }
-
-  private save(): void {
-    this.saveDirect(this.data);
-  }
-
-  private saveDirect(data: DatabaseSchema): void {
-    try {
-      if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-      }
-      const tempPath = `${DB_FILE}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-      fs.renameSync(tempPath, DB_FILE);
     } catch (err) {
-      console.error('[DB] Error writing database file:', err);
+      console.error('[DB] Failed to initialize Firebase connection:', err);
+      this.firestore = null;
     }
   }
 
-  public isHealthy(): boolean {
+  private getDB(): Firestore {
+    if (!this.firestore) {
+      this.setupFirebase();
+    }
+    if (!this.firestore) {
+      throw new Error('Firestore is not configured or unavailable. Check firebase-applet-config.json.');
+    }
+    return this.firestore;
+  }
+
+  public async init(): Promise<void> {
+    if (this.initialized) return;
+    const db = this.getDB();
+
+    // 1. Verify and provision initial settings if missing
+    const settingsRef = doc(db, 'settings', 'global');
+    const settingsSnap = await getDoc(settingsRef);
+    if (!settingsSnap.exists()) {
+      console.log('[DB] Seeding default settings into Firestore...');
+      await setDoc(settingsRef, sanitizeForFirestore(getDefaultSettings()));
+    }
+
+    // 2. Verify admin accounts in Firestore
+    const adminCol = collection(db, 'adminUsers');
+    const adminSnaps = await getDocs(adminCol);
+
+    const envResetPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
+    const envAdminUsername = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
+
+    if (adminSnaps.empty) {
+      console.log('[DB] No admin user detected in Firestore. Generating initial administrator...');
+      let plainPassword = '';
+      let generated = false;
+
+      if (envResetPassword && envResetPassword.length >= 8) {
+        plainPassword = envResetPassword;
+      } else {
+        plainPassword = `NS-${crypto.randomBytes(6).toString('hex')}`;
+        generated = true;
+      }
+
+      const salt = bcrypt.genSaltSync(10);
+      const defaultPasswordHash = bcrypt.hashSync(plainPassword, salt);
+
+      if (generated) {
+        console.log('\n' + '='.repeat(72));
+        console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED IN FIRESTORE');
+        console.log(`Username: ${envAdminUsername}`);
+        console.log(`Initial Password: ${plainPassword}`);
+        console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
+        console.log('='.repeat(72) + '\n');
+      }
+
+      const initialAdmin: StoredAdminUser = {
+        id: 'admin_1',
+        username: envAdminUsername,
+        name: 'Nineties Shots Admin',
+        role: 'owner',
+        passwordHash: defaultPasswordHash,
+        mustChangePassword: true,
+        createdAt: new Date().toISOString()
+      };
+
+      await setDoc(doc(db, 'adminUsers', initialAdmin.id), sanitizeForFirestore(initialAdmin));
+    } else if (envResetPassword && envResetPassword.length >= 8) {
+      // Secure credential synchronization / reset via environment variable
+      const existingAdmins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
+      let targetAdmin = existingAdmins.find(a => a.username.toLowerCase() === envAdminUsername) || existingAdmins[0];
+
+      if (targetAdmin) {
+        const isMatch = bcrypt.compareSync(envResetPassword, targetAdmin.passwordHash);
+        if (!isMatch) {
+          const salt = bcrypt.genSaltSync(10);
+          targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
+          targetAdmin.mustChangePassword = true;
+          await updateDoc(doc(db, 'adminUsers', targetAdmin.id), {
+            passwordHash: targetAdmin.passwordHash,
+            mustChangePassword: true
+          });
+          console.log(`[NINETIES SHOTS] Admin password for "${targetAdmin.username}" securely updated via environment configuration.`);
+        }
+      }
+    }
+
+    // 3. Seed portfolio if collection is completely empty
+    const portfolioCol = collection(db, 'portfolio');
+    const portfolioSnaps = await getDocs(portfolioCol);
+    if (portfolioSnaps.empty) {
+      console.log('[DB] Seeding default portfolio into Firestore...');
+      const batch = writeBatch(db);
+      defaultPortfolioItems.forEach((item, index) => {
+        const docRef = doc(db, 'portfolio', item.id);
+        batch.set(docRef, sanitizeForFirestore({
+          ...item,
+          isHero: item.image === defaultHero.url,
+          isPublished: true,
+          order: index
+        }));
+      });
+      await batch.commit();
+    }
+
+    // 4. Seed services if collection is completely empty
+    const servicesCol = collection(db, 'services');
+    const servicesSnaps = await getDocs(servicesCol);
+    if (servicesSnaps.empty) {
+      console.log('[DB] Seeding default services into Firestore...');
+      const batch = writeBatch(db);
+      defaultServices.forEach((service, index) => {
+        const docRef = doc(db, 'services', service.id);
+        batch.set(docRef, sanitizeForFirestore({
+          ...service,
+          isEnabled: true,
+          order: index,
+          quoteRangeText: 'Custom Commission Scoping'
+        }));
+      });
+      await batch.commit();
+    }
+
+    this.initialized = true;
+  }
+
+  public async isHealthy(): Promise<boolean> {
     try {
-      return Boolean(
-        this.data &&
-        Array.isArray(this.data.adminUsers) &&
-        this.data.adminUsers.length > 0 &&
-        this.data.settings &&
-        typeof this.data.settings.brandName === 'string'
-      );
-    } catch {
+      const db = this.getDB();
+      const settingsRef = doc(db, 'settings', 'global');
+      const snap = await getDoc(settingsRef);
+      return snap.exists();
+    } catch (err) {
+      console.error('[DB] Health check error:', err);
       return false;
     }
   }
 
-  // ==================== AUTH & SESSIONS ====================
-  public authenticateAdmin(username: string, plainPassword: string): { user: AdminUser; token: string } | null {
-    const admin = this.data.adminUsers.find(
-      u => u.username.toLowerCase() === username.trim().toLowerCase()
-    );
-    if (!admin) return null;
+  // ==================== AUTH & SESSION MANAGEMENT ====================
+  public async authenticateAdmin(
+    username: string,
+    plainPassword: string
+  ): Promise<{ success: boolean; user?: AdminUser; token?: string; error?: string }> {
+    const db = this.getDB();
+    const adminSnaps = await getDocs(collection(db, 'adminUsers'));
+    const admins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
+    let admin = admins.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
 
-    const isValid = bcrypt.compareSync(plainPassword, admin.passwordHash);
-    if (!isValid) return null;
+    // Fallback: If not found by exact match and username is 'admin' or 'nineties' or there is only one admin account
+    if (!admin && admins.length > 0) {
+      const lower = username.trim().toLowerCase();
+      if (lower === 'admin' || lower === 'nineties' || admins.length === 1) {
+        admin = admins[0];
+      }
+    }
 
-    // Update last login
-    admin.lastLoginAt = new Date().toISOString();
+    if (!admin) {
+      return { success: false, error: 'Invalid credentials' };
+    }
 
-    // Create session token
+    const isMatch = bcrypt.compareSync(plainPassword, admin.passwordHash);
+    if (!isMatch) {
+      return { success: false, error: 'Invalid credentials' };
+    }
+
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
     const session: Session = {
       token,
@@ -378,78 +392,89 @@ class Database {
       expiresAt
     };
 
-    this.data.sessions.push(session);
+    await setDoc(doc(db, 'sessions', token), sanitizeForFirestore(session));
+    await updateDoc(doc(db, 'adminUsers', admin.id), { lastLoginAt: new Date().toISOString() });
 
-    // Audit log (never logging passwords or tokens)
-    this.addAuditLog('Admin Login', admin.username, 'auth', admin.id, 'Successful admin authentication');
-    this.save();
+    await this.addAuditLog('Admin Login', admin.username, 'auth', admin.id, 'Successful administrator login');
 
-    const { passwordHash: _, ...userSafe } = admin;
+    const { passwordHash: _, ...safeUser } = admin;
     return {
+      success: true,
       user: {
-        ...userSafe,
+        ...safeUser,
         mustChangePassword: Boolean(admin.mustChangePassword)
       },
       token
     };
   }
 
-  public validateSession(token: string): AdminUser | null {
+  public async validateSession(token: string): Promise<AdminUser | null> {
     if (!token) return null;
-    const sessionIndex = this.data.sessions.findIndex(s => s.token === token);
-    if (sessionIndex === -1) return null;
+    try {
+      const db = this.getDB();
+      const sessionRef = doc(db, 'sessions', token);
+      const sessionSnap = await getDoc(sessionRef);
+      if (!sessionSnap.exists()) return null;
 
-    const session = this.data.sessions[sessionIndex];
-    if (new Date(session.expiresAt).getTime() < Date.now()) {
-      // Expired, remove
-      this.data.sessions.splice(sessionIndex, 1);
-      this.save();
+      const session = sessionSnap.data() as Session;
+      if (new Date(session.expiresAt) < new Date()) {
+        await deleteDoc(sessionRef);
+        return null;
+      }
+
+      const adminRef = doc(db, 'adminUsers', session.userId);
+      const adminSnap = await getDoc(adminRef);
+      if (!adminSnap.exists()) return null;
+
+      const admin = adminSnap.data() as StoredAdminUser;
+      const { passwordHash: _, ...safeUser } = admin;
+      return {
+        ...safeUser,
+        mustChangePassword: Boolean(admin.mustChangePassword)
+      };
+    } catch (err) {
+      console.error('[DB] Error validating session:', err);
       return null;
     }
-
-    const admin = this.data.adminUsers.find(u => u.id === session.userId);
-    if (!admin) return null;
-
-    const { passwordHash: _, ...userSafe } = admin;
-    return {
-      ...userSafe,
-      mustChangePassword: Boolean(admin.mustChangePassword)
-    };
   }
 
-  public deleteSession(token: string): boolean {
-    const initialLen = this.data.sessions.length;
-    this.data.sessions = this.data.sessions.filter(s => s.token !== token);
-    if (this.data.sessions.length !== initialLen) {
-      this.save();
-      return true;
+  public async deleteSession(token: string): Promise<void> {
+    if (!token) return;
+    try {
+      const db = this.getDB();
+      await deleteDoc(doc(db, 'sessions', token));
+    } catch (err) {
+      console.error('[DB] Error deleting session:', err);
     }
-    return false;
   }
 
-  public revokeAllSessions(userId: string, keepToken?: string): number {
-    const prevCount = this.data.sessions.length;
-    if (keepToken) {
-      this.data.sessions = this.data.sessions.filter(s => s.userId !== userId || s.token === keepToken);
-    } else {
-      this.data.sessions = this.data.sessions.filter(s => s.userId !== userId);
+  public async revokeAllSessions(userId: string, adminUsername: string = 'admin'): Promise<number> {
+    const db = this.getDB();
+    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    const userSessions = sessionsSnaps.docs.filter(d => (d.data() as Session).userId === userId);
+
+    if (userSessions.length > 0) {
+      const batch = writeBatch(db);
+      userSessions.forEach(d => batch.delete(d.ref));
+      await batch.commit();
     }
-    const revoked = prevCount - this.data.sessions.length;
-    if (revoked > 0) {
-      this.save();
-    }
-    return revoked;
+
+    await this.addAuditLog('Revoke All Sessions', adminUsername, 'auth', userId, `Revoked ${userSessions.length} active sessions`);
+    return userSessions.length;
   }
 
-  public updateAdminPassword(
+  public async updateAdminPassword(
     userId: string,
     currentPlain: string,
     newPlain: string,
     adminUsername: string
-  ): { success: boolean; error?: string; newToken?: string; user?: AdminUser } {
-    const admin = this.data.adminUsers.find(u => u.id === userId);
-    if (!admin) return { success: false, error: 'Administrator not found' };
+  ): Promise<{ success: boolean; error?: string; newToken?: string; user?: AdminUser }> {
+    const db = this.getDB();
+    const adminRef = doc(db, 'adminUsers', userId);
+    const adminSnap = await getDoc(adminRef);
+    if (!adminSnap.exists()) return { success: false, error: 'Administrator not found' };
 
+    const admin = adminSnap.data() as StoredAdminUser;
     if (!bcrypt.compareSync(currentPlain, admin.passwordHash)) {
       return { success: false, error: 'Current password is incorrect' };
     }
@@ -458,25 +483,33 @@ class Database {
       return { success: false, error: 'New password must be at least 8 characters long' };
     }
 
-    admin.passwordHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
-    admin.mustChangePassword = false;
+    const newHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
+    await updateDoc(adminRef, {
+      passwordHash: newHash,
+      mustChangePassword: false
+    });
 
     // Invalidate all existing sessions for this admin
-    this.data.sessions = this.data.sessions.filter(s => s.userId !== userId);
+    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    const userSessions = sessionsSnaps.docs.filter(d => (d.data() as Session).userId === userId);
+    if (userSessions.length > 0) {
+      const batch = writeBatch(db);
+      userSessions.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
 
     // Create a fresh new valid session
     const newToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    this.data.sessions.push({
+    await setDoc(doc(db, 'sessions', newToken), sanitizeForFirestore({
       token: newToken,
       userId: admin.id,
       username: admin.username,
       createdAt: new Date().toISOString(),
       expiresAt
-    });
+    }));
 
-    this.addAuditLog('Password Changed', adminUsername, 'auth', admin.id, 'Admin password successfully updated and existing sessions invalidated');
-    this.save();
+    await this.addAuditLog('Password Changed', adminUsername, 'auth', admin.id, 'Admin password successfully updated and existing sessions invalidated');
 
     const { passwordHash: _, ...userSafe } = admin;
     return {
@@ -489,35 +522,51 @@ class Database {
     };
   }
 
-  public resetAdminPassword(newPlain: string, adminUsername: string = 'admin'): boolean {
+  public async resetAdminPassword(newPlain: string, adminUsername: string = 'admin'): Promise<boolean> {
     if (!newPlain || newPlain.length < 8) {
       throw new Error('Password must be at least 8 characters long');
     }
-    const admin = this.data.adminUsers.find(u => u.username.toLowerCase() === adminUsername.toLowerCase()) || this.data.adminUsers[0];
+    const db = this.getDB();
+    const adminSnaps = await getDocs(collection(db, 'adminUsers'));
+    const admins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
+    const admin = admins.find(u => u.username.toLowerCase() === adminUsername.toLowerCase()) || admins[0];
     if (!admin) return false;
 
-    admin.passwordHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
-    admin.mustChangePassword = false;
+    const newHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
+    await updateDoc(doc(db, 'adminUsers', admin.id), {
+      passwordHash: newHash,
+      mustChangePassword: false
+    });
+
     // Invalidate all active sessions
-    this.data.sessions = [];
-    this.addAuditLog('Admin Password Reset', admin.username, 'auth', admin.id, 'Administrator password reset via server CLI/recovery');
-    this.save();
+    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    if (!sessionsSnaps.empty) {
+      const batch = writeBatch(db);
+      sessionsSnaps.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    await this.addAuditLog('Admin Password Reset', admin.username, 'auth', admin.id, 'Administrator password reset via server CLI/recovery');
     return true;
   }
 
   // ==================== CLIENTS & INQUIRIES ====================
-  private findOrCreateClient(name: string, email: string, phone: string): Client {
+  private async findOrCreateClient(name: string, email: string, phone: string): Promise<Client> {
+    const db = this.getDB();
     const cleanPhone = (phone || '').replace(/[^0-9]/g, '');
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    let client = this.data.clients.find(c => {
+    const clientSnaps = await getDocs(collection(db, 'clients'));
+    const clients = clientSnaps.docs.map(d => d.data() as Client);
+
+    let client = clients.find(c => {
       const matchEmail = cleanEmail && c.email.trim().toLowerCase() === cleanEmail;
       const matchPhone = cleanPhone && c.phone.replace(/[^0-9]/g, '') === cleanPhone;
       return matchEmail || matchPhone;
     });
 
     if (!client) {
-      client = {
+      const newClient: Client = {
         id: `cli_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         name: name.trim(),
         email: email.trim(),
@@ -531,20 +580,36 @@ class Database {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      this.data.clients.unshift(client);
+      await setDoc(doc(db, 'clients', newClient.id), sanitizeForFirestore(newClient));
+      return newClient;
     } else {
-      // Update missing fields
-      if (!client.email && email) client.email = email.trim();
-      if (!client.phone && phone) client.phone = phone.trim();
-      client.updatedAt = new Date().toISOString();
+      let needsUpdate = false;
+      const updates: Partial<Client> = { updatedAt: new Date().toISOString() };
+      if (!client.email && email) {
+        updates.email = email.trim();
+        client.email = email.trim();
+        needsUpdate = true;
+      }
+      if (!client.phone && phone) {
+        updates.phone = phone.trim();
+        client.phone = phone.trim();
+        needsUpdate = true;
+      }
+      if (needsUpdate) {
+        await updateDoc(doc(db, 'clients', client.id), sanitizeForFirestore(updates));
+      }
+      return client;
     }
-
-    return client;
   }
 
-  public createInquiry(form: InquiryFormData): Inquiry {
-    const client = this.findOrCreateClient(form.fullName, form.email, form.phoneOrWhatsapp);
-    client.inquiriesCount += 1;
+  public async createInquiry(form: InquiryFormData): Promise<Inquiry> {
+    const db = this.getDB();
+    const client = await this.findOrCreateClient(form.fullName, form.email, form.phoneOrWhatsapp);
+    const newCount = (client.inquiriesCount || 0) + 1;
+    await updateDoc(doc(db, 'clients', client.id), {
+      inquiriesCount: newCount,
+      updatedAt: new Date().toISOString()
+    });
 
     const reference = generateReference('NS');
     const inquiry: Inquiry = {
@@ -564,71 +629,83 @@ class Database {
       clientId: client.id
     };
 
-    this.data.inquiries.unshift(inquiry);
-    this.addAuditLog('New Inquiry Received', 'visitor', 'inquiry', inquiry.id, `Inquiry ref: ${reference} from ${form.fullName}`);
-    this.save();
+    await setDoc(doc(db, 'inquiries', inquiry.id), sanitizeForFirestore(inquiry));
+    await this.addAuditLog('New Inquiry Received', 'visitor', 'inquiry', inquiry.id, `Inquiry ref: ${reference} from ${form.fullName}`);
     return inquiry;
   }
 
-  public getInquiries(search?: string, status?: string): Inquiry[] {
-    return this.data.inquiries.filter(inq => {
+  public async getInquiries(search?: string, status?: string): Promise<Inquiry[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'inquiries'));
+    let inquiries = snaps.docs.map(d => d.data() as Inquiry);
+
+    return inquiries.filter(inq => {
       const matchesSearch = !search ||
-        inq.clientName.toLowerCase().includes(search.toLowerCase()) ||
-        inq.reference.toLowerCase().includes(search.toLowerCase()) ||
-        inq.email.toLowerCase().includes(search.toLowerCase()) ||
-        inq.phone.includes(search) ||
-        inq.location.toLowerCase().includes(search.toLowerCase());
+        (inq.clientName && inq.clientName.toLowerCase().includes(search.toLowerCase())) ||
+        (inq.reference && inq.reference.toLowerCase().includes(search.toLowerCase())) ||
+        (inq.email && inq.email.toLowerCase().includes(search.toLowerCase())) ||
+        (inq.phone && inq.phone.includes(search)) ||
+        (inq.location && inq.location.toLowerCase().includes(search.toLowerCase()));
 
       const matchesStatus = !status || status === 'all' || inq.status === status;
       return matchesSearch && matchesStatus;
-    });
+    }).sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
   }
 
-  public getInquiryById(id: string): Inquiry | null {
-    return this.data.inquiries.find(inq => inq.id === id) || null;
+  public async getInquiryById(id: string): Promise<Inquiry | null> {
+    const db = this.getDB();
+    const snap = await getDoc(doc(db, 'inquiries', id));
+    return snap.exists() ? (snap.data() as Inquiry) : null;
   }
 
-  public updateInquiry(id: string, updates: Partial<Inquiry>, adminUsername: string): Inquiry | null {
-    const inq = this.data.inquiries.find(i => i.id === id);
-    if (!inq) return null;
+  public async updateInquiry(id: string, updates: Partial<Inquiry>, adminUsername: string): Promise<Inquiry | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'inquiries', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
 
+    const inq = snap.data() as Inquiry;
     const oldStatus = inq.status;
-    Object.assign(inq, updates);
+    const sanitized = sanitizeForFirestore(updates);
+    await updateDoc(ref, sanitized);
 
+    const updated = { ...inq, ...updates };
     if (updates.status && updates.status !== oldStatus) {
-      this.addAuditLog('Inquiry Status Changed', adminUsername, 'inquiry', inq.id, `Status updated from ${oldStatus} to ${updates.status}`);
+      await this.addAuditLog('Inquiry Status Changed', adminUsername, 'inquiry', id, `Status updated from ${oldStatus} to ${updates.status}`);
     } else {
-      this.addAuditLog('Inquiry Updated', adminUsername, 'inquiry', inq.id, 'Inquiry details/notes updated');
+      await this.addAuditLog('Inquiry Updated', adminUsername, 'inquiry', id, 'Inquiry details/notes updated');
     }
 
-    this.save();
-    return inq;
+    return updated;
   }
 
-  public deleteInquiry(id: string, adminUsername: string): boolean {
-    const index = this.data.inquiries.findIndex(i => i.id === id);
-    if (index === -1) return false;
-    const ref = this.data.inquiries[index].reference;
-    this.data.inquiries.splice(index, 1);
-    this.addAuditLog('Inquiry Deleted', adminUsername, 'inquiry', id, `Deleted inquiry ref ${ref}`);
-    this.save();
+  public async deleteInquiry(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const ref = doc(db, 'inquiries', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
+
+    const inq = snap.data() as Inquiry;
+    await deleteDoc(ref);
+    await this.addAuditLog('Inquiry Deleted', adminUsername, 'inquiry', id, `Deleted inquiry ref ${inq.reference}`);
     return true;
   }
 
   // ==================== BOOKINGS ====================
-  public createBooking(data: Partial<Booking>, adminUsername: string): Booking {
-    const client = this.findOrCreateClient(
+  public async createBooking(data: Partial<Booking>, adminUsername: string): Promise<Booking> {
+    const db = this.getDB();
+    const client = await this.findOrCreateClient(
       data.clientName || 'Client',
       data.clientEmail || '',
       data.clientPhone || ''
     );
 
     const bookingRef = generateReference('NS');
-    const quote = Number(data.quoteAmount || 0);
-    const deposit = Number(data.depositAmount || 0);
-    const additional = Number(data.additionalPayment || 0);
-    const finalP = Number(data.finalPayment || 0);
-    const refund = Number(data.refundAmount || 0);
+    const quote = Math.max(0, Math.round(Number(data.quoteAmount || 0) * 100) / 100);
+    const deposit = Math.max(0, Math.round(Number(data.depositAmount || 0) * 100) / 100);
+    const additional = Math.max(0, Math.round(Number(data.additionalPayment || 0) * 100) / 100);
+    const finalP = Math.max(0, Math.round(Number(data.finalPayment || 0) * 100) / 100);
+    const refund = Math.max(0, Math.round(Number(data.refundAmount || 0) * 100) / 100);
     const totalPaid = Math.max(0, (deposit + additional + finalP) - refund);
 
     let paymentStatus: PaymentStatus = 'Not Set';
@@ -671,167 +748,236 @@ class Database {
       updatedAt: new Date().toISOString()
     };
 
-    this.data.bookings.unshift(booking);
-    client.bookingsCount += 1;
-    if (booking.bookingStatus === 'Completed') {
-      client.completedShootsCount += 1;
-    }
-    client.totalRevenue += totalPaid;
+    await setDoc(doc(db, 'bookings', booking.id), sanitizeForFirestore(booking));
+
+    const newBookingsCount = (client.bookingsCount || 0) + 1;
+    const newCompletedCount = booking.bookingStatus === 'Completed' ? (client.completedShootsCount || 0) + 1 : (client.completedShootsCount || 0);
+    const newTotalRevenue = (client.totalRevenue || 0) + totalPaid;
+
+    await updateDoc(doc(db, 'clients', client.id), {
+      bookingsCount: newBookingsCount,
+      completedShootsCount: newCompletedCount,
+      totalRevenue: newTotalRevenue,
+      updatedAt: new Date().toISOString()
+    });
 
     if (data.inquiryId) {
-      const inq = this.data.inquiries.find(i => i.id === data.inquiryId);
-      if (inq) {
-        inq.status = 'Confirmed';
-        inq.convertedBookingId = booking.id;
+      const inqRef = doc(db, 'inquiries', data.inquiryId);
+      const inqSnap = await getDoc(inqRef);
+      if (inqSnap.exists()) {
+        await updateDoc(inqRef, {
+          status: 'Confirmed',
+          convertedBookingId: booking.id
+        });
       }
     }
 
-    this.addAuditLog('Booking Created', adminUsername, 'booking', booking.id, `Created booking ${bookingRef} for ${booking.clientName}`);
-    this.save();
+    await this.addAuditLog('Booking Created', adminUsername, 'booking', booking.id, `Created booking ${bookingRef} for ${booking.clientName}`);
     return booking;
   }
 
-  public getBookings(search?: string, status?: string): Booking[] {
-    return this.data.bookings.filter(b => {
+  public async getBookings(search?: string, status?: string): Promise<Booking[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'bookings'));
+    let bookings = snaps.docs.map(d => d.data() as Booking);
+
+    return bookings.filter(b => {
       const matchesSearch = !search ||
-        b.clientName.toLowerCase().includes(search.toLowerCase()) ||
-        b.bookingReference.toLowerCase().includes(search.toLowerCase()) ||
-        b.clientEmail.toLowerCase().includes(search.toLowerCase()) ||
-        b.serviceTitle.toLowerCase().includes(search.toLowerCase()) ||
-        b.location.toLowerCase().includes(search.toLowerCase());
+        (b.clientName && b.clientName.toLowerCase().includes(search.toLowerCase())) ||
+        (b.bookingReference && b.bookingReference.toLowerCase().includes(search.toLowerCase())) ||
+        (b.clientEmail && b.clientEmail.toLowerCase().includes(search.toLowerCase())) ||
+        (b.serviceTitle && b.serviceTitle.toLowerCase().includes(search.toLowerCase())) ||
+        (b.location && b.location.toLowerCase().includes(search.toLowerCase()));
 
       const matchesStatus = !status || status === 'all' || b.bookingStatus === status;
       return matchesSearch && matchesStatus;
-    });
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
-  public getBookingById(id: string): Booking | null {
-    return this.data.bookings.find(b => b.id === id) || null;
+  public async getBookingById(id: string): Promise<Booking | null> {
+    const db = this.getDB();
+    const snap = await getDoc(doc(db, 'bookings', id));
+    return snap.exists() ? (snap.data() as Booking) : null;
   }
 
-  public updateBooking(id: string, updates: Partial<Booking>, adminUsername: string): Booking | null {
-    const booking = this.data.bookings.find(b => b.id === id);
-    if (!booking) return null;
+  public async updateBooking(id: string, updates: Partial<Booking>, adminUsername: string): Promise<Booking | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'bookings', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
 
+    const booking = snap.data() as Booking;
     const oldStatus = booking.bookingStatus;
-    const oldPaid = booking.totalPaid;
+    const oldPaid = Number(booking.totalPaid || 0);
 
-    Object.assign(booking, updates);
+    const merged = { ...booking, ...updates };
 
-    // Recalculate financial breakdown if numbers changed
-    const quote = Number(booking.quoteAmount || 0);
-    const deposit = Number(booking.depositAmount || 0);
-    const additional = Number(booking.additionalPayment || 0);
-    const finalP = Number(booking.finalPayment || 0);
-    const refund = Number(booking.refundAmount || 0);
+    // Recalculate financial breakdown
+    const quote = Math.max(0, Math.round(Number(merged.quoteAmount || 0) * 100) / 100);
+    const deposit = Math.max(0, Math.round(Number(merged.depositAmount || 0) * 100) / 100);
+    const additional = Math.max(0, Math.round(Number(merged.additionalPayment || 0) * 100) / 100);
+    const finalP = Math.max(0, Math.round(Number(merged.finalPayment || 0) * 100) / 100);
+    const refund = Math.max(0, Math.round(Number(merged.refundAmount || 0) * 100) / 100);
     const totalPaid = Math.max(0, (deposit + additional + finalP) - refund);
-    booking.totalPaid = totalPaid;
-    booking.flaggedOverpayment = quote > 0 && totalPaid > quote;
+
+    merged.quoteAmount = quote;
+    merged.depositAmount = deposit;
+    merged.additionalPayment = additional;
+    merged.finalPayment = finalP;
+    merged.refundAmount = refund;
+    merged.totalPaid = totalPaid;
+    merged.flaggedOverpayment = quote > 0 && totalPaid > quote;
 
     if (!updates.paymentStatus && quote > 0) {
-      if (refund > 0 && totalPaid === 0) booking.paymentStatus = 'Refunded';
-      else if (totalPaid >= quote) booking.paymentStatus = 'Paid';
-      else if (totalPaid > 0) booking.paymentStatus = totalPaid === deposit ? 'Deposit Paid' : 'Partially Paid';
-      else booking.paymentStatus = 'Unpaid';
+      if (refund > 0 && totalPaid === 0) merged.paymentStatus = 'Refunded';
+      else if (totalPaid >= quote) merged.paymentStatus = 'Paid';
+      else if (totalPaid > 0) merged.paymentStatus = totalPaid === deposit ? 'Deposit Paid' : 'Partially Paid';
+      else merged.paymentStatus = 'Unpaid';
     }
 
-    booking.updatedAt = new Date().toISOString();
+    merged.updatedAt = new Date().toISOString();
+
+    await setDoc(ref, sanitizeForFirestore(merged));
 
     // Recalculate client completed stats and total revenue
-    const client = this.data.clients.find(c => c.id === booking.clientId);
-    if (client) {
-      client.totalRevenue += (totalPaid - oldPaid);
-      if (oldStatus !== 'Completed' && booking.bookingStatus === 'Completed') {
-        client.completedShootsCount += 1;
-      } else if (oldStatus === 'Completed' && booking.bookingStatus !== 'Completed') {
-        client.completedShootsCount = Math.max(0, client.completedShootsCount - 1);
+    if (booking.clientId) {
+      const clientRef = doc(db, 'clients', booking.clientId);
+      const clientSnap = await getDoc(clientRef);
+      if (clientSnap.exists()) {
+        const client = clientSnap.data() as Client;
+        let completedShootsCount = client.completedShootsCount || 0;
+        if (oldStatus !== 'Completed' && merged.bookingStatus === 'Completed') {
+          completedShootsCount += 1;
+        } else if (oldStatus === 'Completed' && merged.bookingStatus !== 'Completed') {
+          completedShootsCount = Math.max(0, completedShootsCount - 1);
+        }
+
+        const totalRevenue = Math.max(0, (client.totalRevenue || 0) + (totalPaid - oldPaid));
+        await updateDoc(clientRef, {
+          totalRevenue,
+          completedShootsCount,
+          updatedAt: new Date().toISOString()
+        });
       }
-      client.updatedAt = new Date().toISOString();
     }
 
-    this.addAuditLog('Booking Updated', adminUsername, 'booking', booking.id, `Updated booking ${booking.bookingReference}`);
-    this.save();
-    return booking;
+    await this.addAuditLog('Booking Updated', adminUsername, 'booking', booking.id, `Updated booking ${booking.bookingReference}`);
+    return merged;
   }
 
-  public deleteBooking(id: string, adminUsername: string): boolean {
-    const index = this.data.bookings.findIndex(b => b.id === id);
-    if (index === -1) return false;
+  public async deleteBooking(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const ref = doc(db, 'bookings', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
 
-    const booking = this.data.bookings[index];
-    const ref = booking.bookingReference;
-    const clientId = booking.clientId;
-    const clientEmail = (booking.clientEmail || '').trim().toLowerCase();
+    const booking = snap.data() as Booking;
+    await deleteDoc(ref);
 
-    // 1. Remove the booking record
-    this.data.bookings.splice(index, 1);
+    // Recalculate associated client statistics accurately from all remaining records
+    if (booking.clientId) {
+      const clientRef = doc(db, 'clients', booking.clientId);
+      const clientSnap = await getDoc(clientRef);
+      if (clientSnap.exists()) {
+        const client = clientSnap.data() as Client;
+        const allBookingsSnaps = await getDocs(collection(db, 'bookings'));
+        const remaining = allBookingsSnaps.docs
+          .map(d => d.data() as Booking)
+          .filter(b => b.clientId === client.id || (client.email && b.clientEmail && b.clientEmail.trim().toLowerCase() === client.email.trim().toLowerCase()));
 
-    // 2. Recalculate associated client statistics accurately from all remaining records
-    const client = this.data.clients.find(c => 
-      c.id === clientId || (clientEmail && c.email.trim().toLowerCase() === clientEmail)
-    );
+        const bookingsCount = Math.max(0, remaining.length);
+        const completedShootsCount = Math.max(0, remaining.filter(b => b.bookingStatus === 'Completed').length);
+        const totalRevenue = Math.max(0, remaining.reduce((sum, b) => sum + Number(b.totalPaid || 0), 0));
 
-    if (client) {
-      const remainingClientBookings = this.data.bookings.filter(b => 
-        b.clientId === client.id || (client.email && b.clientEmail.trim().toLowerCase() === client.email.trim().toLowerCase())
-      );
-
-      client.bookingsCount = Math.max(0, remainingClientBookings.length);
-      client.completedShootsCount = Math.max(0, remainingClientBookings.filter(b => b.bookingStatus === 'Completed').length);
-      client.totalRevenue = Math.max(0, remainingClientBookings.reduce((sum, b) => sum + Number(b.totalPaid || 0), 0));
-      client.updatedAt = new Date().toISOString();
+        await updateDoc(clientRef, {
+          bookingsCount,
+          completedShootsCount,
+          totalRevenue,
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
 
-    this.addAuditLog('Booking Deleted', adminUsername, 'booking', id, `Deleted booking ${ref}`);
-    this.save();
+    await this.addAuditLog('Booking Deleted', adminUsername, 'booking', id, `Deleted booking ${booking.bookingReference}`);
     return true;
   }
 
   // ==================== CLIENTS ====================
-  public getClients(search?: string): Client[] {
-    return this.data.clients.filter(c => {
+  public async getClients(search?: string): Promise<Client[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'clients'));
+    let clients = snaps.docs.map(d => d.data() as Client);
+
+    return clients.filter(c => {
       if (!search) return true;
       const q = search.toLowerCase();
       return (
-        c.name.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        c.phone.includes(q) ||
-        c.notes.toLowerCase().includes(q)
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.email && c.email.toLowerCase().includes(q)) ||
+        (c.phone && c.phone.includes(q)) ||
+        (c.notes && c.notes.toLowerCase().includes(q))
       );
-    });
+    }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }
 
-  public getClientById(id: string): { client: Client; inquiries: Inquiry[]; bookings: Booking[] } | null {
-    const client = this.data.clients.find(c => c.id === id);
-    if (!client) return null;
+  public async getClientById(id: string): Promise<{ client: Client; inquiries: Inquiry[]; bookings: Booking[] } | null> {
+    const db = this.getDB();
+    const clientSnap = await getDoc(doc(db, 'clients', id));
+    if (!clientSnap.exists()) return null;
 
-    const inquiries = this.data.inquiries.filter(i => i.clientId === id || i.email.toLowerCase() === client.email.toLowerCase());
-    const bookings = this.data.bookings.filter(b => b.clientId === id || b.clientEmail.toLowerCase() === client.email.toLowerCase());
+    const client = clientSnap.data() as Client;
+    const clientEmail = (client.email || '').trim().toLowerCase();
+
+    const [inqSnaps, bkSnaps] = await Promise.all([
+      getDocs(collection(db, 'inquiries')),
+      getDocs(collection(db, 'bookings'))
+    ]);
+
+    const inquiries = inqSnaps.docs
+      .map(d => d.data() as Inquiry)
+      .filter(i => i.clientId === id || (clientEmail && i.email && i.email.trim().toLowerCase() === clientEmail))
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+
+    const bookings = bkSnaps.docs
+      .map(d => d.data() as Booking)
+      .filter(b => b.clientId === id || (clientEmail && b.clientEmail && b.clientEmail.trim().toLowerCase() === clientEmail))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return { client, inquiries, bookings };
   }
 
-  public updateClient(id: string, updates: Partial<Client>, adminUsername: string): Client | null {
-    const client = this.data.clients.find(c => c.id === id);
-    if (!client) return null;
+  public async updateClient(id: string, updates: Partial<Client>, adminUsername: string): Promise<Client | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'clients', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
 
-    Object.assign(client, updates, { updatedAt: new Date().toISOString() });
-    this.addAuditLog('Client Profile Updated', adminUsername, 'client', id, `Updated client ${client.name}`);
-    this.save();
-    return client;
+    const client = snap.data() as Client;
+    const sanitized = sanitizeForFirestore({ ...updates, updatedAt: new Date().toISOString() });
+    await updateDoc(ref, sanitized);
+
+    const updated = { ...client, ...sanitized };
+    await this.addAuditLog('Client Profile Updated', adminUsername, 'client', id, `Updated client ${client.name}`);
+    return updated;
   }
 
   // ==================== PORTFOLIO ====================
-  public getPortfolio(includeUnpublished: boolean = false): PortfolioItem[] {
-    let items = [...this.data.portfolio];
+  public async getPortfolio(includeUnpublished: boolean = false): Promise<PortfolioItem[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'portfolio'));
+    let items = snaps.docs.map(d => d.data() as (PortfolioItem & { isPublished?: boolean; order: number }));
+
     if (!includeUnpublished) {
       items = items.filter(i => i.isPublished !== false);
     }
-    return items.sort((a, b) => a.order - b.order);
+    return items.sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
-  public addPortfolioItem(item: Partial<PortfolioItem>, adminUsername: string): PortfolioItem {
+  public async addPortfolioItem(item: Partial<PortfolioItem>, adminUsername: string): Promise<PortfolioItem> {
+    const db = this.getDB();
     const id = `photo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const snaps = await getDocs(collection(db, 'portfolio'));
+
     const newItem = {
       id,
       title: item.title || 'Untitled Exposure',
@@ -849,71 +995,99 @@ class Database {
       cameraSettings: item.cameraSettings || {},
       isHero: false,
       isPublished: true,
-      order: this.data.portfolio.length
+      order: snaps.size
     };
 
-    this.data.portfolio.push(newItem);
-    this.addAuditLog('Portfolio Photo Added', adminUsername, 'portfolio', id, `Added photograph "${newItem.title}"`);
-    this.save();
+    await setDoc(doc(db, 'portfolio', id), sanitizeForFirestore(newItem));
+    await this.addAuditLog('Portfolio Photo Added', adminUsername, 'portfolio', id, `Added photograph "${newItem.title}"`);
     return newItem;
   }
 
-  public updatePortfolioItem(id: string, updates: Partial<PortfolioItem & { isPublished?: boolean; isHero?: boolean; order?: number }>, adminUsername: string): PortfolioItem | null {
-    const item = this.data.portfolio.find(i => i.id === id);
-    if (!item) return null;
+  public async updatePortfolioItem(
+    id: string,
+    updates: Partial<PortfolioItem & { isPublished?: boolean; isHero?: boolean; order?: number }>,
+    adminUsername: string
+  ): Promise<PortfolioItem | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'portfolio', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
 
-    Object.assign(item, updates);
-    this.addAuditLog('Portfolio Photo Updated', adminUsername, 'portfolio', id, `Updated photograph "${item.title}"`);
-    this.save();
-    return item;
+    const item = snap.data() as PortfolioItem;
+    await updateDoc(ref, sanitizeForFirestore(updates));
+    const updated = { ...item, ...updates };
+
+    await this.addAuditLog('Portfolio Photo Updated', adminUsername, 'portfolio', id, `Updated photograph "${item.title}"`);
+    return updated;
   }
 
-  public deletePortfolioItem(id: string, adminUsername: string): boolean {
-    const index = this.data.portfolio.findIndex(i => i.id === id);
-    if (index === -1) return false;
-    const title = this.data.portfolio[index].title;
-    this.data.portfolio.splice(index, 1);
-    this.addAuditLog('Portfolio Photo Deleted', adminUsername, 'portfolio', id, `Deleted photograph "${title}"`);
-    this.save();
+  public async deletePortfolioItem(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const ref = doc(db, 'portfolio', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
+
+    const item = snap.data() as PortfolioItem;
+    await deleteDoc(ref);
+    await this.addAuditLog('Portfolio Photo Deleted', adminUsername, 'portfolio', id, `Deleted photograph "${item.title}"`);
     return true;
   }
 
-  public setHeroImage(id: string, adminUsername: string): boolean {
-    const item = this.data.portfolio.find(i => i.id === id);
-    if (!item) return false;
+  public async setHeroImage(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const targetRef = doc(db, 'portfolio', id);
+    const targetSnap = await getDoc(targetRef);
+    if (!targetSnap.exists()) return false;
 
-    this.data.portfolio.forEach(p => {
-      p.isHero = (p.id === id);
+    const targetItem = targetSnap.data() as PortfolioItem;
+    const portfolioSnaps = await getDocs(collection(db, 'portfolio'));
+
+    const batch = writeBatch(db);
+    portfolioSnaps.docs.forEach(d => {
+      batch.update(d.ref, { isHero: d.id === id });
     });
 
-    this.data.settings.heroImage = item.image;
-    this.data.settings.heroAlt = item.alt;
+    batch.update(doc(db, 'settings', 'global'), {
+      heroImage: targetItem.image,
+      heroAlt: targetItem.alt
+    });
 
-    this.addAuditLog('Hero Image Changed', adminUsername, 'settings', id, `Set homepage hero to "${item.title}"`);
-    this.save();
+    await batch.commit();
+    await this.addAuditLog('Hero Image Changed', adminUsername, 'settings', id, `Set homepage hero to "${targetItem.title}"`);
     return true;
   }
 
-  public setPhotographerPortrait(url: string, alt: string, adminUsername: string): boolean {
-    this.data.settings.photographerPortrait = url;
-    if (alt) this.data.settings.photographerPortraitAlt = alt;
+  public async setPhotographerPortrait(url: string, alt: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const settingsRef = doc(db, 'settings', 'global');
+    const updates: Record<string, string> = { photographerPortrait: url };
+    if (alt) updates.photographerPortraitAlt = alt;
 
-    this.addAuditLog('Photographer Portrait Changed', adminUsername, 'settings', 'portrait', 'Updated About page portrait photograph');
-    this.save();
+    await updateDoc(settingsRef, updates);
+    await this.addAuditLog('Photographer Portrait Changed', adminUsername, 'settings', 'portrait', 'Updated About page portrait photograph');
     return true;
   }
 
   // ==================== SERVICES ====================
-  public getServices(includeDisabled: boolean = false): ServiceItem[] {
-    let list = [...this.data.services];
+  public async getServices(includeDisabled: boolean = false): Promise<ServiceItem[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'services'));
+    let list = snaps.docs.map(d => d.data() as (ServiceItem & { isEnabled?: boolean; order: number }));
+
     if (!includeDisabled) {
       list = list.filter(s => s.isEnabled !== false);
     }
-    return list.sort((a, b) => a.order - b.order);
+    return list.sort((a, b) => (a.order || 0) - (b.order || 0));
   }
 
-  public addService(service: Partial<ServiceItem & { isEnabled?: boolean; quoteRangeText?: string }>, adminUsername: string): ServiceItem {
+  public async addService(
+    service: Partial<ServiceItem & { isEnabled?: boolean; quoteRangeText?: string }>,
+    adminUsername: string
+  ): Promise<ServiceItem> {
+    const db = this.getDB();
     const id = `srv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const snaps = await getDocs(collection(db, 'services'));
+
     const newService = {
       id,
       title: service.title || 'New Service',
@@ -924,79 +1098,98 @@ class Database {
       deliverables: service.deliverables || [],
       sampleImage: service.sampleImage || '',
       isEnabled: service.isEnabled ?? true,
-      order: this.data.services.length,
+      order: snaps.size,
       quoteRangeText: service.quoteRangeText || 'Custom Scoping'
     };
 
-    this.data.services.push(newService);
-    this.addAuditLog('Service Added', adminUsername, 'service', id, `Added service "${newService.title}"`);
-    this.save();
+    await setDoc(doc(db, 'services', id), sanitizeForFirestore(newService));
+    await this.addAuditLog('Service Added', adminUsername, 'service', id, `Added service "${newService.title}"`);
     return newService;
   }
 
-  public updateService(id: string, updates: Partial<ServiceItem & { isEnabled?: boolean; quoteRangeText?: string }>, adminUsername: string): ServiceItem | null {
-    const srv = this.data.services.find(s => s.id === id);
-    if (!srv) return null;
+  public async updateService(
+    id: string,
+    updates: Partial<ServiceItem & { isEnabled?: boolean; quoteRangeText?: string }>,
+    adminUsername: string
+  ): Promise<ServiceItem | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'services', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
 
-    Object.assign(srv, updates);
-    this.addAuditLog('Service Updated', adminUsername, 'service', id, `Updated service "${srv.title}"`);
-    this.save();
-    return srv;
+    const srv = snap.data() as ServiceItem;
+    await updateDoc(ref, sanitizeForFirestore(updates));
+    const updated = { ...srv, ...updates };
+
+    await this.addAuditLog('Service Updated', adminUsername, 'service', id, `Updated service "${srv.title}"`);
+    return updated;
   }
 
-  public deleteService(id: string, adminUsername: string): boolean {
-    const index = this.data.services.findIndex(s => s.id === id);
-    if (index === -1) return false;
-    const title = this.data.services[index].title;
-    this.data.services.splice(index, 1);
-    this.addAuditLog('Service Deleted', adminUsername, 'service', id, `Deleted service "${title}"`);
-    this.save();
+  public async deleteService(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const ref = doc(db, 'services', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
+
+    const srv = snap.data() as ServiceItem;
+    await deleteDoc(ref);
+    await this.addAuditLog('Service Deleted', adminUsername, 'service', id, `Deleted service "${srv.title}"`);
     return true;
   }
 
   // ==================== SETTINGS ====================
-  public getSettings(): DatabaseSchema['settings'] {
-    return this.data.settings;
+  public async getSettings(): Promise<DatabaseSchema['settings']> {
+    const db = this.getDB();
+    const snap = await getDoc(doc(db, 'settings', 'global'));
+    if (snap.exists()) {
+      return snap.data() as DatabaseSchema['settings'];
+    }
+    const def = getDefaultSettings();
+    await setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(def));
+    return def;
   }
 
-  public updateSettings(updates: Partial<DatabaseSchema['settings']>, adminUsername: string): DatabaseSchema['settings'] {
-    this.data.settings = {
-      ...this.data.settings,
-      ...updates
-    };
-    this.addAuditLog('Settings Updated', adminUsername, 'settings', 'global', 'Updated contact, socials, or brand settings');
-    this.save();
-    return this.data.settings;
+  public async updateSettings(updates: Partial<DatabaseSchema['settings']>, adminUsername: string): Promise<DatabaseSchema['settings']> {
+    const db = this.getDB();
+    const ref = doc(db, 'settings', 'global');
+    await updateDoc(ref, sanitizeForFirestore(updates));
+    const snap = await getDoc(ref);
+    await this.addAuditLog('Settings Updated', adminUsername, 'settings', 'global', 'Updated contact, socials, or brand settings');
+    return snap.data() as DatabaseSchema['settings'];
   }
 
   // ==================== ANALYTICS ====================
-  public recordAnalyticsEvent(event: Omit<AnalyticsEvent, 'id' | 'timestamp'>): void {
-    const item: AnalyticsEvent = {
-      id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      ...event,
-      timestamp: new Date().toISOString()
-    };
-    this.data.analyticsEvents.push(item);
-
-    // Keep events array bounded to last 10,000 to prevent unbounded growth
-    if (this.data.analyticsEvents.length > 10000) {
-      this.data.analyticsEvents = this.data.analyticsEvents.slice(-5000);
+  public async recordAnalyticsEvent(event: Omit<AnalyticsEvent, 'id' | 'timestamp'>): Promise<void> {
+    try {
+      const db = this.getDB();
+      const id = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const item: AnalyticsEvent = {
+        id,
+        ...event,
+        timestamp: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'analyticsEvents', id), sanitizeForFirestore(item));
+    } catch (err) {
+      console.error('[DB] Failed to record analytics event:', err);
     }
-    this.save();
   }
 
-  public getAnalyticsSummary(): {
+  public async getAnalyticsSummary(): Promise<{
     totalEvents: number;
     eventsByType: Record<string, number>;
     recentEvents: AnalyticsEvent[];
     popularCategories: Record<string, number>;
     popularImages: Record<string, number>;
-  } {
+  }> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'analyticsEvents'));
+    const events = snaps.docs.map(d => d.data() as AnalyticsEvent);
+
     const eventsByType: Record<string, number> = {};
     const popularCategories: Record<string, number> = {};
     const popularImages: Record<string, number> = {};
 
-    for (const ev of this.data.analyticsEvents) {
+    for (const ev of events) {
       eventsByType[ev.eventType] = (eventsByType[ev.eventType] || 0) + 1;
       if (ev.eventType === 'category_select' && ev.target) {
         popularCategories[ev.target] = (popularCategories[ev.target] || 0) + 1;
@@ -1007,70 +1200,79 @@ class Database {
     }
 
     return {
-      totalEvents: this.data.analyticsEvents.length,
+      totalEvents: events.length,
       eventsByType,
-      recentEvents: this.data.analyticsEvents.slice(-50).reverse(),
+      recentEvents: events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50),
       popularCategories,
       popularImages
     };
   }
 
   // ==================== AUDIT LOGS ====================
-  public addAuditLog(
+  public async addAuditLog(
     action: string,
     adminUsername: string,
     recordType: AuditLog['recordType'],
     recordId: string | undefined,
     details: string
-  ): void {
-    const log: AuditLog = {
-      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      action,
-      adminUsername,
-      recordType,
-      recordId,
-      details,
-      timestamp: new Date().toISOString()
-    };
-    this.data.auditLogs.unshift(log);
-
-    // Keep active memory bounded (500 records) and archive older records to JSONL append-only file
-    if (this.data.auditLogs.length > 500) {
-      const recordsToArchive = this.data.auditLogs.slice(500);
-      try {
-        const jsonlLines = recordsToArchive.map(r => JSON.stringify(r)).join('\n') + '\n';
-        fs.appendFileSync(AUDIT_ARCHIVE_FILE, jsonlLines, 'utf-8');
-        // Only slice from in-memory array AFTER successful disk append
-        this.data.auditLogs = this.data.auditLogs.slice(0, 500);
-      } catch (err) {
-        console.error('[AUDIT ARCHIVE] Failed to append records to archive JSONL:', err);
-        // Retain in memory on write error to prevent data destruction
-      }
+  ): Promise<void> {
+    try {
+      const db = this.getDB();
+      const id = `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const log: AuditLog = {
+        id,
+        action,
+        adminUsername,
+        recordType,
+        recordId: recordId || undefined,
+        details,
+        timestamp: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'auditLogs', id), sanitizeForFirestore(log));
+    } catch (err) {
+      console.error('[DB] Error writing audit log:', err);
     }
   }
 
-  public getAuditLogs(): AuditLog[] {
-    return this.data.auditLogs;
+  public async getAuditLogs(): Promise<AuditLog[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'auditLogs'));
+    return snaps.docs
+      .map(d => d.data() as AuditLog)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
   // ==================== DASHBOARD STATS ====================
-  public getDashboardStats(): DashboardStats {
-    const totalInquiries = this.data.inquiries.length;
-    const pendingInquiries = this.data.inquiries.filter(i => i.status === 'New' || i.status === 'Contacted').length;
-    const activeBookings = this.data.bookings.filter(b => b.bookingStatus === 'Confirmed' || b.bookingStatus === 'In Progress' || b.bookingStatus === 'Awaiting Deposit').length;
-    const completedShoots = this.data.bookings.filter(b => b.bookingStatus === 'Completed').length;
+  public async getDashboardStats(): Promise<DashboardStats> {
+    const db = this.getDB();
+    const [inqSnaps, bkSnaps, cliSnaps, portSnaps] = await Promise.all([
+      getDocs(collection(db, 'inquiries')),
+      getDocs(collection(db, 'bookings')),
+      getDocs(collection(db, 'clients')),
+      getDocs(collection(db, 'portfolio'))
+    ]);
+
+    const inquiries = inqSnaps.docs.map(d => d.data() as Inquiry);
+    const bookings = bkSnaps.docs.map(d => d.data() as Booking);
+    const clients = cliSnaps.docs.map(d => d.data() as Client);
+    const portfolio = portSnaps.docs.map(d => d.data() as (PortfolioItem & { isPublished?: boolean }));
+
+    const totalInquiries = inquiries.length;
+    const pendingInquiries = inquiries.filter(i => i.status === 'New' || i.status === 'Contacted').length;
+    const activeBookings = bookings.filter(b => b.bookingStatus === 'Confirmed' || b.bookingStatus === 'In Progress' || b.bookingStatus === 'Awaiting Deposit').length;
+    const completedShoots = bookings.filter(b => b.bookingStatus === 'Completed').length;
 
     let totalRevenue = 0;
     let paidRevenue = 0;
 
-    for (const b of this.data.bookings) {
+    for (const b of bookings) {
       totalRevenue += Number(b.quoteAmount || 0);
       paidRevenue += Number(b.totalPaid || 0);
     }
 
     const outstandingRevenue = Math.max(0, totalRevenue - paidRevenue);
-    const totalClients = this.data.clients.length;
-    const publishedPortfolioCount = this.data.portfolio.filter(p => p.isPublished !== false).length;
+    const totalClients = clients.length;
+    const publishedPortfolioCount = portfolio.filter(p => p.isPublished !== false).length;
 
     return {
       totalInquiries,
@@ -1086,61 +1288,62 @@ class Database {
   }
 
   // ==================== CURRENCY CONVERSION HISTORY ====================
-  public addConversionRecord(
+  public async addConversionRecord(
     record: Omit<CurrencyConversionRecord, 'id'>,
     adminUsername: string
-  ): CurrencyConversionRecord {
+  ): Promise<CurrencyConversionRecord> {
+    const db = this.getDB();
+    const id = `conv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const item: CurrencyConversionRecord = {
-      id: `conv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id,
       ...record
     };
 
-    if (!Array.isArray(this.data.conversionHistory)) {
-      this.data.conversionHistory = [];
-    }
-
-    this.data.conversionHistory.unshift(item);
-    // Keep last 100 conversions
-    if (this.data.conversionHistory.length > 100) {
-      this.data.conversionHistory = this.data.conversionHistory.slice(0, 100);
-    }
-
-    this.addAuditLog(
+    await setDoc(doc(db, 'conversionHistory', id), sanitizeForFirestore(item));
+    await this.addAuditLog(
       'Currency Converted',
       adminUsername,
       'settings',
-      item.id,
+      id,
       `Converted ${record.originalCurrency} ${record.originalAmount} -> GHS ${record.convertedAmount} (Rate: 1 ${record.originalCurrency} = GH₵${record.exchangeRate}, Type: ${record.rateType})`
     );
 
-    this.save();
     return item;
   }
 
-  public getConversionHistory(limit: number = 50): CurrencyConversionRecord[] {
-    if (!Array.isArray(this.data.conversionHistory)) {
-      return [];
-    }
-    return this.data.conversionHistory.slice(0, limit);
+  public async getConversionHistory(limit: number = 50): Promise<CurrencyConversionRecord[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'conversionHistory'));
+    return snaps.docs
+      .map(d => d.data() as CurrencyConversionRecord)
+      .sort((a, b) => new Date(b.convertedAt).getTime() - new Date(a.convertedAt).getTime())
+      .slice(0, limit);
   }
 
-  public clearConversionHistory(adminUsername: string): boolean {
-    this.data.conversionHistory = [];
-    this.addAuditLog('Conversion History Cleared', adminUsername, 'settings', undefined, 'Cleared admin currency conversion history');
-    this.save();
+  public async clearConversionHistory(adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'conversionHistory'));
+    if (!snaps.empty) {
+      const batch = writeBatch(db);
+      snaps.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    await this.addAuditLog('Conversion History Cleared', adminUsername, 'settings', undefined, 'Cleared admin currency conversion history');
     return true;
   }
 
   // ==================== EXPENSES & FINANCE TRACKING ====================
-  public getExpenses(filter?: {
+  public async getExpenses(filter?: {
     category?: string;
     search?: string;
     startDate?: string;
     endDate?: string;
     timeRange?: string;
     paymentMethod?: string;
-  }): Expense[] {
-    let list = Array.isArray(this.data.expenses) ? [...this.data.expenses] : [];
+  }): Promise<Expense[]> {
+    const db = this.getDB();
+    const snaps = await getDocs(collection(db, 'expenses'));
+    let list = snaps.docs.map(d => d.data() as Expense);
 
     if (filter) {
       if (filter.category && filter.category !== 'all') {
@@ -1179,51 +1382,52 @@ class Database {
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
-  public getExpenseById(id: string): Expense | null {
-    if (!Array.isArray(this.data.expenses)) return null;
-    return this.data.expenses.find(e => e.id === id) || null;
+  public async getExpenseById(id: string): Promise<Expense | null> {
+    const db = this.getDB();
+    const snap = await getDoc(doc(db, 'expenses', id));
+    return snap.exists() ? (snap.data() as Expense) : null;
   }
 
-  public createExpense(data: Partial<Expense>, adminUsername: string): Expense {
-    if (!Array.isArray(this.data.expenses)) {
-      this.data.expenses = [];
-    }
-
-    const amount = Math.max(0, Math.round(Number(data.amount || 0) * 100) / 100);
-    const date = data.date && /^\d{4}-\d{2}-\d{2}$/.test(data.date)
-      ? data.date
-      : new Date().toISOString().split('T')[0];
+  public async createExpense(
+    data: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>,
+    adminUsername: string
+  ): Promise<Expense> {
+    const db = this.getDB();
+    const id = `exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const amt = Math.max(0, Math.round(Number(data.amount || 0) * 100) / 100);
 
     const expense: Expense = {
-      id: `exp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      date,
-      category: data.category || 'Equipment',
-      amount,
-      description: (data.description || 'Studio Expense').trim(),
+      id,
+      category: data.category || 'Other',
+      amount: amt,
+      date: data.date || new Date().toISOString().split('T')[0],
+      description: (data.description || '').trim(),
       paymentMethod: data.paymentMethod || 'Mobile Money',
       receiptRef: data.receiptRef ? data.receiptRef.trim() : undefined,
       notes: data.notes ? data.notes.trim() : undefined,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdBy: adminUsername
+      updatedAt: new Date().toISOString()
     };
 
-    this.data.expenses.unshift(expense);
-    this.addAuditLog(
+    await setDoc(doc(db, 'expenses', id), sanitizeForFirestore(expense));
+    await this.addAuditLog(
       'Expense Created',
       adminUsername,
       'expense',
-      expense.id,
-      `Logged expense of GH₵${expense.amount.toFixed(2)} for ${expense.category}: "${expense.description}"`
+      id,
+      `Recorded expense of GH₵${amt.toFixed(2)} (${expense.category}: ${expense.description})`
     );
-    this.save();
+
     return expense;
   }
 
-  public updateExpense(id: string, updates: Partial<Expense>, adminUsername: string): Expense | null {
-    if (!Array.isArray(this.data.expenses)) return null;
-    const expense = this.data.expenses.find(e => e.id === id);
-    if (!expense) return null;
+  public async updateExpense(id: string, updates: Partial<Expense>, adminUsername: string): Promise<Expense | null> {
+    const db = this.getDB();
+    const ref = doc(db, 'expenses', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+
+    const expense = snap.data() as Expense;
 
     if (updates.amount !== undefined) {
       expense.amount = Math.max(0, Math.round(Number(updates.amount || 0) * 100) / 100);
@@ -1239,46 +1443,54 @@ class Database {
 
     expense.updatedAt = new Date().toISOString();
 
-    this.addAuditLog(
+    await setDoc(ref, sanitizeForFirestore(expense));
+    await this.addAuditLog(
       'Expense Updated',
       adminUsername,
       'expense',
       expense.id,
       `Updated expense ${expense.id} (GH₵${expense.amount.toFixed(2)} - ${expense.category})`
     );
-    this.save();
+
     return expense;
   }
 
-  public deleteExpense(id: string, adminUsername: string): boolean {
-    if (!Array.isArray(this.data.expenses)) return false;
-    const index = this.data.expenses.findIndex(e => e.id === id);
-    if (index === -1) return false;
+  public async deleteExpense(id: string, adminUsername: string): Promise<boolean> {
+    const db = this.getDB();
+    const ref = doc(db, 'expenses', id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
 
-    const removed = this.data.expenses[index];
-    this.data.expenses.splice(index, 1);
-    this.addAuditLog(
+    const removed = snap.data() as Expense;
+    await deleteDoc(ref);
+    await this.addAuditLog(
       'Expense Deleted',
       adminUsername,
       'expense',
       id,
       `Deleted expense of GH₵${removed.amount.toFixed(2)} (${removed.category}: ${removed.description})`
     );
-    this.save();
+
     return true;
   }
 
   // ==================== FINANCIAL CALCULATIONS & ANALYTICS ====================
-  public getFinanceOverview(timeRange: string = 'all', customStart?: string, customEnd?: string): FinanceOverviewStats {
+  public async getFinanceOverview(timeRange: string = 'all', customStart?: string, customEnd?: string): Promise<FinanceOverviewStats> {
+    const db = this.getDB();
+    const [bkSnaps, expSnaps] = await Promise.all([
+      getDocs(collection(db, 'bookings')),
+      getDocs(collection(db, 'expenses'))
+    ]);
+
+    const allBookings = bkSnaps.docs.map(d => d.data() as Booking);
+    const allExpenses = expSnaps.docs.map(d => d.data() as Expense);
+
     const { startDate, endDate } = resolveDateFilter(timeRange, customStart, customEnd);
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
     const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
     const currentYearKey = `${currentYear}`;
-
-    const allBookings = this.data.bookings || [];
-    const allExpenses = this.data.expenses || [];
 
     let totalRevenue = 0;
     let revenueThisMonth = 0;
@@ -1315,10 +1527,6 @@ class Database {
       const inRange = isDateInRange(bookingDateStr, startDate, endDate);
       if (!inRange) continue;
 
-      // Handle Cancelled bookings with or without refund:
-      // - Cancelled with no refund: paid > 0 counts as retained revenue
-      // - Cancelled with full refund: paid = 0, contributes GH₵0 to totalRevenue
-      // - Cancelled with partial refund: paid > 0 counts as net retained revenue
       if (isCancelled) {
         if (paid > 0) {
           totalRevenue += paid;
@@ -1332,21 +1540,20 @@ class Database {
           additionalPaymentRevenue += additional;
           refundedTotal += refund;
         }
-        // Cancelled bookings do NOT carry outstanding balances
         continue;
       }
 
       // Active / Non-cancelled bookings
       totalBookingsCount += 1;
-      totalRevenue += paid;
+      if (paid > 0) {
+        paidBookingsCount += 1;
+        totalRevenue += paid;
+      }
+
       depositRevenue += deposit;
       finalPaymentRevenue += finalP;
       additionalPaymentRevenue += additional;
       refundedTotal += refund;
-
-      if (paid >= quote && quote > 0) {
-        paidBookingsCount += 1;
-      }
 
       const outstanding = Math.max(0, quote - paid);
       outstandingPayments += outstanding;
@@ -1402,10 +1609,17 @@ class Database {
     };
   }
 
-  public getFinanceAnalytics(timeRange: string = 'this_year', customStart?: string, customEnd?: string): FinanceAnalyticsData {
+  public async getFinanceAnalytics(timeRange: string = 'this_year', customStart?: string, customEnd?: string): Promise<FinanceAnalyticsData> {
+    const db = this.getDB();
+    const [bkSnaps, expSnaps] = await Promise.all([
+      getDocs(collection(db, 'bookings')),
+      getDocs(collection(db, 'expenses'))
+    ]);
+
+    const allBookings = bkSnaps.docs.map(d => d.data() as Booking);
+    const allExpenses = expSnaps.docs.map(d => d.data() as Expense);
+
     const { startDate, endDate } = resolveDateFilter(timeRange, customStart, customEnd);
-    const allBookings = this.data.bookings || [];
-    const allExpenses = this.data.expenses || [];
 
     // 1. Monthly Revenue & Expenses (Rolling Last 6 Months)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1443,7 +1657,7 @@ class Database {
       });
     }
 
-    // 2. Revenue Over Time (Dynamic Timeline points aligned with selected filter)
+    // 2. Revenue Over Time
     const revenueOverTime: FinanceAnalyticsData['revenueOverTime'] = [];
 
     if (timeRange === 'this_year') {
@@ -1594,40 +1808,7 @@ class Database {
           netIncome: Math.round((mRevenue - mExpenses) * 100) / 100
         });
       }
-    } else if (timeRange === 'custom' && customStart && customEnd) {
-      const s = new Date(customStart);
-      const e = new Date(customEnd);
-      const diffDays = Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000));
-      const step = diffDays > 60 ? Math.ceil(diffDays / 12) : 1;
-
-      for (let d = new Date(s); d <= e; d.setDate(d.getDate() + step)) {
-        const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const label = `${monthNames[d.getMonth()]} ${String(d.getDate()).padStart(2, '0')}`;
-
-        const dayRev = allBookings
-          .filter(b => b.bookingStatus !== 'Cancelled' || Number(b.totalPaid || 0) > 0)
-          .filter(b => {
-            const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
-            return bDate === dayKey;
-          })
-          .reduce((sum, b) => sum + Number(b.totalPaid || 0), 0);
-
-        const dayExp = allExpenses
-          .filter(exp => {
-            const eDate = exp.date || (exp.createdAt ? exp.createdAt.split('T')[0] : '');
-            return eDate === dayKey;
-          })
-          .reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-
-        revenueOverTime.push({
-          date: label,
-          revenue: Math.round(dayRev * 100) / 100,
-          expenses: Math.round(dayExp * 100) / 100,
-          netIncome: Math.round((dayRev - dayExp) * 100) / 100
-        });
-      }
     } else {
-      // Default (all time): rolling 6 months
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const y = d.getFullYear();
@@ -1659,7 +1840,7 @@ class Database {
       }
     }
 
-    // 3. Revenue by Service (Filtered by date boundary, including retained revenue)
+    // 3. Revenue by Service
     const serviceMap: Record<string, { revenue: number; count: number }> = {};
     let totalServiceRevenue = 0;
 
@@ -1691,7 +1872,7 @@ class Database {
       }))
       .sort((a, b) => b.revenue - a.revenue);
 
-    // 4. Expenses by Category (Filtered by date boundary)
+    // 4. Expenses by Category
     const categoryMap: Record<string, { amount: number; count: number }> = {};
     let totalCatExpense = 0;
 
@@ -1718,7 +1899,7 @@ class Database {
       }))
       .sort((a, b) => b.amount - a.amount);
 
-    // 5. Paid vs Outstanding (Filtered by date boundary)
+    // 5. Paid vs Outstanding
     let paidTotal = 0;
     let paidCount = 0;
     let outstandingTotal = 0;
@@ -1749,7 +1930,7 @@ class Database {
       { name: 'Outstanding Balances', value: Math.round(outstandingTotal * 100) / 100, count: outstandingCount, color: '#F59E0B' }
     ];
 
-    // 6. Income Components (Deposits vs Final vs Additional for selected period)
+    // 6. Income Components
     let totalDeposits = 0;
     let totalFinal = 0;
     let totalAdditional = 0;
@@ -1799,7 +1980,7 @@ class Database {
     };
   }
 
-  public getFinancialTransactions(filter?: {
+  public async getFinancialTransactions(filter?: {
     search?: string;
     type?: string;
     status?: string;
@@ -1807,10 +1988,17 @@ class Database {
     endDate?: string;
     timeRange?: string;
     limit?: number;
-  }): FinancialTransaction[] {
+  }): Promise<FinancialTransaction[]> {
+    const db = this.getDB();
+    const [bkSnaps, expSnaps] = await Promise.all([
+      getDocs(collection(db, 'bookings')),
+      getDocs(collection(db, 'expenses'))
+    ]);
+
+    const allBookings = bkSnaps.docs.map(d => d.data() as Booking);
+    const allExpenses = expSnaps.docs.map(d => d.data() as Expense);
+
     const transactions: FinancialTransaction[] = [];
-    const allBookings = this.data.bookings || [];
-    const allExpenses = this.data.expenses || [];
 
     // Transform Bookings into Transaction Records
     for (const b of allBookings) {
@@ -1906,7 +2094,6 @@ class Database {
         });
       }
 
-      // If quote set with 0 paid (pending payment) - only for non-cancelled bookings
       if (quote > 0 && paid === 0 && !isCancelled) {
         transactions.push({
           id: `tx_pen_${b.id}`,
@@ -1982,9 +2169,9 @@ class Database {
       if (filter.search) {
         const q = filter.search.toLowerCase().trim();
         result = result.filter(t =>
-          t.title.toLowerCase().includes(q) ||
-          t.clientOrPayee.toLowerCase().includes(q) ||
-          t.serviceOrCategory.toLowerCase().includes(q) ||
+          (t.title && t.title.toLowerCase().includes(q)) ||
+          (t.clientOrPayee && t.clientOrPayee.toLowerCase().includes(q)) ||
+          (t.serviceOrCategory && t.serviceOrCategory.toLowerCase().includes(q)) ||
           (t.bookingRef && t.bookingRef.toLowerCase().includes(q)) ||
           (t.notes && t.notes.toLowerCase().includes(q)) ||
           (t.paymentMethod && t.paymentMethod.toLowerCase().includes(q))

@@ -1,4 +1,4 @@
-import { Transition, Variants } from 'motion/react';
+import { Transition, Variants, useReducedMotion } from 'motion/react';
 
 /**
  * NINETIES SHOTS — Cinematic Motion Tokens
@@ -125,3 +125,102 @@ export const galleryItemVariants: Variants = {
     },
   },
 };
+
+/**
+ * Hook to provide motion tokens and variants that respect prefers-reduced-motion.
+ * When reduced motion is preferred, transitions collapse to 0 duration and displacement is eliminated.
+ */
+export function useCinematicMotion() {
+  const shouldReduceMotion = useReducedMotion();
+  const reduceMotion = Boolean(shouldReduceMotion);
+
+  return {
+    reduceMotion,
+    cinematicEase: reduceMotion ? ([0, 0, 1, 1] as const) : cinematicEase,
+    filmicEase: reduceMotion ? ([0, 0, 1, 1] as const) : filmicEase,
+    transitions: {
+      scene: reduceMotion ? ({ duration: 0 } as Transition) : transitions.scene,
+      photoDissolve: reduceMotion ? ({ duration: 0 } as Transition) : transitions.photoDissolve,
+      textReveal: reduceMotion ? ({ duration: 0 } as Transition) : transitions.textReveal,
+      ui: reduceMotion ? ({ duration: 0 } as Transition) : transitions.ui,
+      cameraDrift: reduceMotion ? ({ duration: 0 } as Transition) : transitions.cameraDrift,
+    },
+    sceneVariants: {
+      initial: {
+        opacity: 0,
+        y: reduceMotion ? 0 : 12,
+      },
+      animate: {
+        opacity: 1,
+        y: 0,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.42, ease: cinematicEase },
+      },
+      exit: {
+        opacity: 0,
+        y: reduceMotion ? 0 : -8,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.28, ease: cinematicEase },
+      },
+    } as Variants,
+    sectionFadeVariants: {
+      hidden: {
+        opacity: 0,
+        y: reduceMotion ? 0 : 20,
+      },
+      visible: {
+        opacity: 1,
+        y: 0,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.7, ease: cinematicEase },
+      },
+    } as Variants,
+    hairlineVariants: {
+      hidden: {
+        scaleX: reduceMotion ? 1 : 0,
+        transformOrigin: 'left',
+      },
+      visible: {
+        scaleX: 1,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.85, ease: cinematicEase, delay: 0.2 },
+      },
+    } as Variants,
+    galleryItemVariants: {
+      hidden: {
+        opacity: 0,
+        y: reduceMotion ? 0 : 16,
+      },
+      visible: {
+        opacity: 1,
+        y: 0,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.5, ease: cinematicEase },
+      },
+      exit: {
+        opacity: 0,
+        transition: reduceMotion
+          ? { duration: 0 }
+          : { duration: 0.25, ease: cinematicEase },
+      },
+    } as Variants,
+    fadeTransition: (duration: number = 0.7, delay: number = 0): Transition =>
+      reduceMotion ? { duration: 0 } : { duration, delay, ease: cinematicEase },
+    fadeUp: (yOffset: number = 20, duration: number = 0.7, delay: number = 0) => ({
+      initial: { opacity: 0, y: reduceMotion ? 0 : yOffset },
+      animate: { opacity: 1, y: 0 },
+      transition: reduceMotion ? { duration: 0 } : { duration, delay, ease: cinematicEase },
+    }),
+    fadeUpInView: (yOffset: number = 20, duration: number = 0.7, delay: number = 0, margin: string = '-40px') => ({
+      initial: { opacity: 0, y: reduceMotion ? 0 : yOffset },
+      whileInView: { opacity: 1, y: 0 },
+      viewport: { once: true, margin },
+      transition: reduceMotion ? { duration: 0 } : { duration, delay, ease: cinematicEase },
+    }),
+  };
+}

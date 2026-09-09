@@ -12,195 +12,6 @@ import {
   WriteBatch
 } from 'firebase-admin/firestore';
 
-const inMemoryStore = new Map<string, Map<string, any>>();
-
-function isPermissionOrUnavailableError(err: any): boolean {
-  if (!err) return false;
-  const code = err.code;
-  const msg = String(err.message || '');
-  return code === 7 || code === 14 || code === 16 || msg.includes('PERMISSION_DENIED') || msg.includes('Missing or insufficient permissions');
-}
-
-function doc(db: Firestore, collectionName: string, docId: string): DocumentReference {
-  return db.collection(collectionName).doc(docId);
-}
-
-function collection(db: Firestore, collectionName: string): CollectionReference {
-  return db.collection(collectionName);
-}
-
-async function getDoc(docRef: DocumentReference): Promise<{
-  id: string;
-  ref: DocumentReference;
-  exists: () => boolean;
-  data: () => any;
-}> {
-  try {
-    const snap = await docRef.get();
-    return {
-      id: snap.id,
-      ref: snap.ref,
-      exists: () => snap.exists,
-      data: () => snap.data()
-    };
-  } catch (err: any) {
-    if (isPermissionOrUnavailableError(err)) {
-      const colName = docRef.parent.id;
-      const docId = docRef.id;
-      const colMap = inMemoryStore.get(colName);
-      const data = colMap?.get(docId);
-      return {
-        id: docId,
-        ref: docRef,
-        exists: () => !!data,
-        data: () => data ? JSON.parse(JSON.stringify(data)) : undefined
-      };
-    }
-    throw err;
-  }
-}
-
-async function getDocs(colRef: CollectionReference): Promise<{
-  empty: boolean;
-  size: number;
-  docs: Array<{
-    id: string;
-    ref: DocumentReference;
-    exists: () => boolean;
-    data: () => any;
-  }>;
-}> {
-  try {
-    const snap = await colRef.get();
-    return {
-      empty: snap.empty,
-      size: snap.size,
-      docs: snap.docs.map(d => ({
-        id: d.id,
-        ref: d.ref,
-        exists: () => d.exists,
-        data: () => d.data()
-      }))
-    };
-  } catch (err: any) {
-    if (isPermissionOrUnavailableError(err)) {
-      const colName = colRef.id;
-      const colMap = inMemoryStore.get(colName) || new Map();
-      const docs = Array.from(colMap.entries()).map(([id, val]) => ({
-        id,
-        ref: colRef.doc(id),
-        exists: () => true,
-        data: () => JSON.parse(JSON.stringify(val))
-      }));
-      return {
-        empty: docs.length === 0,
-        size: docs.length,
-        docs
-      };
-    }
-    throw err;
-  }
-}
-
-async function setDoc(docRef: DocumentReference, data: any): Promise<void> {
-  const colName = docRef.parent.id;
-  const docId = docRef.id;
-  if (!inMemoryStore.has(colName)) inMemoryStore.set(colName, new Map());
-  inMemoryStore.get(colName)!.set(docId, JSON.parse(JSON.stringify(data)));
-  try {
-    await docRef.set(data);
-  } catch (err: any) {
-    if (isPermissionOrUnavailableError(err)) {
-      return;
-    }
-    throw err;
-  }
-}
-
-async function updateDoc(docRef: DocumentReference, data: any): Promise<void> {
-  const colName = docRef.parent.id;
-  const docId = docRef.id;
-  if (inMemoryStore.has(colName) && inMemoryStore.get(colName)!.has(docId)) {
-    const existing = inMemoryStore.get(colName)!.get(docId);
-    inMemoryStore.get(colName)!.set(docId, { ...existing, ...JSON.parse(JSON.stringify(data)) });
-  }
-  try {
-    await docRef.update(data);
-  } catch (err: any) {
-    if (isPermissionOrUnavailableError(err)) {
-      return;
-    }
-    throw err;
-  }
-}
-
-async function deleteDoc(docRef: DocumentReference): Promise<void> {
-  const colName = docRef.parent.id;
-  const docId = docRef.id;
-  if (inMemoryStore.has(colName)) {
-    inMemoryStore.get(colName)!.delete(docId);
-  }
-  try {
-    await docRef.delete();
-  } catch (err: any) {
-    if (isPermissionOrUnavailableError(err)) {
-      return;
-    }
-    throw err;
-  }
-}
-
-function writeBatch(db: Firestore): WriteBatch {
-  const realBatch = db.batch();
-  const operations: Array<() => void> = [];
-
-  return {
-    set(docRef: DocumentReference, data: any, options?: any) {
-      operations.push(() => {
-        const col = docRef.parent.id;
-        const id = docRef.id;
-        if (!inMemoryStore.has(col)) inMemoryStore.set(col, new Map());
-        inMemoryStore.get(col)!.set(id, JSON.parse(JSON.stringify(data)));
-      });
-      realBatch.set(docRef, data, options);
-      return this as any;
-    },
-    update(docRef: DocumentReference, data: any, ...rest: any[]) {
-      operations.push(() => {
-        const col = docRef.parent.id;
-        const id = docRef.id;
-        if (inMemoryStore.has(col) && inMemoryStore.get(col)!.has(id)) {
-          const ex = inMemoryStore.get(col)!.get(id);
-          inMemoryStore.get(col)!.set(id, { ...ex, ...JSON.parse(JSON.stringify(data)) });
-        }
-      });
-      realBatch.update(docRef, data, ...rest);
-      return this as any;
-    },
-    delete(docRef: DocumentReference) {
-      operations.push(() => {
-        const col = docRef.parent.id;
-        const id = docRef.id;
-        if (inMemoryStore.has(col)) inMemoryStore.get(col)!.delete(id);
-      });
-      realBatch.delete(docRef);
-      return this as any;
-    },
-    async commit() {
-      operations.forEach(op => op());
-      try {
-        await realBatch.commit();
-      } catch (err: any) {
-        if (isPermissionOrUnavailableError(err)) {
-          return [] as any;
-        }
-        throw err;
-      }
-      return [] as any;
-    }
-  } as any;
-}
-
 import {
   Inquiry,
   InquiryFormData,
@@ -436,16 +247,16 @@ class Database {
     const db = this.getDB();
 
     // 1. Verify and provision initial settings if missing
-    const settingsRef = doc(db, 'settings', 'global');
-    const settingsSnap = await getDoc(settingsRef);
-    if (!settingsSnap.exists()) {
+    const settingsRef = db.collection('settings').doc('global');
+    const settingsSnap = await settingsRef.get();
+    if (!settingsSnap.exists) {
       console.log('[DB] Seeding default settings into Firestore...');
-      await setDoc(settingsRef, sanitizeForFirestore(getDefaultSettings()));
+      await settingsRef.set(sanitizeForFirestore(getDefaultSettings()));
     }
 
     // 2. Verify admin accounts in Firestore
-    const adminCol = collection(db, 'adminUsers');
-    const adminSnaps = await getDocs(adminCol);
+    const adminCol = db.collection('adminUsers');
+    const adminSnaps = await adminCol.get();
 
     const envResetPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
     const envAdminUsername = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
@@ -484,7 +295,7 @@ class Database {
         createdAt: new Date().toISOString()
       };
 
-      await setDoc(doc(db, 'adminUsers', initialAdmin.id), sanitizeForFirestore(initialAdmin));
+      await db.collection('adminUsers').doc(initialAdmin.id).set(sanitizeForFirestore(initialAdmin));
     } else if (envResetPassword && envResetPassword.length >= 8) {
       // Secure credential synchronization / reset via environment variable
       const existingAdmins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
@@ -496,7 +307,7 @@ class Database {
           const salt = bcrypt.genSaltSync(10);
           targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
           targetAdmin.mustChangePassword = true;
-          await updateDoc(doc(db, 'adminUsers', targetAdmin.id), {
+          await db.collection('adminUsers').doc(targetAdmin.id).update({
             passwordHash: targetAdmin.passwordHash,
             mustChangePassword: true
           });
@@ -506,13 +317,13 @@ class Database {
     }
 
     // 3. Seed portfolio if collection is completely empty
-    const portfolioCol = collection(db, 'portfolio');
-    const portfolioSnaps = await getDocs(portfolioCol);
+    const portfolioCol = db.collection('portfolio');
+    const portfolioSnaps = await portfolioCol.get();
     if (portfolioSnaps.empty) {
       console.log('[DB] Seeding default portfolio into Firestore...');
-      const batch = writeBatch(db);
+      const batch = db.batch();
       defaultPortfolioItems.forEach((item, index) => {
-        const docRef = doc(db, 'portfolio', item.id);
+        const docRef = db.collection('portfolio').doc(item.id);
         batch.set(docRef, sanitizeForFirestore({
           ...item,
           isHero: item.image === defaultHero.url,
@@ -524,13 +335,13 @@ class Database {
     }
 
     // 4. Seed services if collection is completely empty
-    const servicesCol = collection(db, 'services');
-    const servicesSnaps = await getDocs(servicesCol);
+    const servicesCol = db.collection('services');
+    const servicesSnaps = await servicesCol.get();
     if (servicesSnaps.empty) {
       console.log('[DB] Seeding default services into Firestore...');
-      const batch = writeBatch(db);
+      const batch = db.batch();
       defaultServices.forEach((service, index) => {
-        const docRef = doc(db, 'services', service.id);
+        const docRef = db.collection('services').doc(service.id);
         batch.set(docRef, sanitizeForFirestore({
           ...service,
           isEnabled: true,
@@ -547,9 +358,9 @@ class Database {
   public async isHealthy(): Promise<boolean> {
     try {
       const db = this.getDB();
-      const settingsRef = doc(db, 'settings', 'global');
-      const snap = await getDoc(settingsRef);
-      return snap.exists();
+      const settingsRef = db.collection('settings').doc('global');
+      const snap = await settingsRef.get();
+      return snap.exists;
     } catch (err) {
       console.error('[DB] Health check error:', err);
       return false;
@@ -562,7 +373,7 @@ class Database {
     plainPassword: string
   ): Promise<{ success: boolean; user?: AdminUser; token?: string; error?: string }> {
     const db = this.getDB();
-    const adminSnaps = await getDocs(collection(db, 'adminUsers'));
+    const adminSnaps = await db.collection('adminUsers').get();
     const admins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
     let admin = admins.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
 
@@ -594,8 +405,8 @@ class Database {
       expiresAt
     };
 
-    await setDoc(doc(db, 'sessions', token), sanitizeForFirestore(session));
-    await updateDoc(doc(db, 'adminUsers', admin.id), { lastLoginAt: new Date().toISOString() });
+    await db.collection('sessions').doc(token).set(sanitizeForFirestore(session));
+    await db.collection('adminUsers').doc(admin.id).update({ lastLoginAt: new Date().toISOString() });
 
     await this.addAuditLog('Admin Login', admin.username, 'auth', admin.id, 'Successful administrator login');
 
@@ -614,19 +425,19 @@ class Database {
     if (!token) return null;
     try {
       const db = this.getDB();
-      const sessionRef = doc(db, 'sessions', token);
-      const sessionSnap = await getDoc(sessionRef);
-      if (!sessionSnap.exists()) return null;
+      const sessionRef = db.collection('sessions').doc(token);
+      const sessionSnap = await sessionRef.get();
+      if (!sessionSnap.exists) return null;
 
       const session = sessionSnap.data() as Session;
       if (new Date(session.expiresAt) < new Date()) {
-        await deleteDoc(sessionRef);
+        await sessionRef.delete();
         return null;
       }
 
-      const adminRef = doc(db, 'adminUsers', session.userId);
-      const adminSnap = await getDoc(adminRef);
-      if (!adminSnap.exists()) return null;
+      const adminRef = db.collection('adminUsers').doc(session.userId);
+      const adminSnap = await adminRef.get();
+      if (!adminSnap.exists) return null;
 
       const admin = adminSnap.data() as StoredAdminUser;
       const { passwordHash: _, ...safeUser } = admin;
@@ -644,7 +455,7 @@ class Database {
     if (!token) return;
     try {
       const db = this.getDB();
-      await deleteDoc(doc(db, 'sessions', token));
+      await db.collection('sessions').doc(token).delete();
     } catch (err) {
       console.error('[DB] Error deleting session:', err);
     }
@@ -652,11 +463,11 @@ class Database {
 
   public async revokeAllSessions(userId: string, adminUsername: string = 'admin'): Promise<number> {
     const db = this.getDB();
-    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    const sessionsSnaps = await db.collection('sessions').get();
     const userSessions = sessionsSnaps.docs.filter(d => (d.data() as Session).userId === userId);
 
     if (userSessions.length > 0) {
-      const batch = writeBatch(db);
+      const batch = db.batch();
       userSessions.forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
@@ -672,9 +483,9 @@ class Database {
     adminUsername: string
   ): Promise<{ success: boolean; error?: string; newToken?: string; user?: AdminUser }> {
     const db = this.getDB();
-    const adminRef = doc(db, 'adminUsers', userId);
-    const adminSnap = await getDoc(adminRef);
-    if (!adminSnap.exists()) return { success: false, error: 'Administrator not found' };
+    const adminRef = db.collection('adminUsers').doc(userId);
+    const adminSnap = await adminRef.get();
+    if (!adminSnap.exists) return { success: false, error: 'Administrator not found' };
 
     const admin = adminSnap.data() as StoredAdminUser;
     if (!bcrypt.compareSync(currentPlain, admin.passwordHash)) {
@@ -686,16 +497,16 @@ class Database {
     }
 
     const newHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
-    await updateDoc(adminRef, {
+    await adminRef.update({
       passwordHash: newHash,
       mustChangePassword: false
     });
 
     // Invalidate all existing sessions for this admin
-    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    const sessionsSnaps = await db.collection('sessions').get();
     const userSessions = sessionsSnaps.docs.filter(d => (d.data() as Session).userId === userId);
     if (userSessions.length > 0) {
-      const batch = writeBatch(db);
+      const batch = db.batch();
       userSessions.forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
@@ -703,7 +514,7 @@ class Database {
     // Create a fresh new valid session
     const newToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    await setDoc(doc(db, 'sessions', newToken), sanitizeForFirestore({
+    await db.collection('sessions').doc(newToken).set(sanitizeForFirestore({
       token: newToken,
       userId: admin.id,
       username: admin.username,
@@ -729,21 +540,21 @@ class Database {
       throw new Error('Password must be at least 8 characters long');
     }
     const db = this.getDB();
-    const adminSnaps = await getDocs(collection(db, 'adminUsers'));
+    const adminSnaps = await db.collection('adminUsers').get();
     const admins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
     const admin = admins.find(u => u.username.toLowerCase() === adminUsername.toLowerCase()) || admins[0];
     if (!admin) return false;
 
     const newHash = bcrypt.hashSync(newPlain, bcrypt.genSaltSync(10));
-    await updateDoc(doc(db, 'adminUsers', admin.id), {
+    await db.collection('adminUsers').doc(admin.id).update({
       passwordHash: newHash,
       mustChangePassword: false
     });
 
     // Invalidate all active sessions
-    const sessionsSnaps = await getDocs(collection(db, 'sessions'));
+    const sessionsSnaps = await db.collection('sessions').get();
     if (!sessionsSnaps.empty) {
-      const batch = writeBatch(db);
+      const batch = db.batch();
       sessionsSnaps.docs.forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
@@ -758,7 +569,7 @@ class Database {
     const cleanPhone = (phone || '').replace(/[^0-9]/g, '');
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    const clientSnaps = await getDocs(collection(db, 'clients'));
+    const clientSnaps = await db.collection('clients').get();
     const clients = clientSnaps.docs.map(d => d.data() as Client);
 
     let client = clients.find(c => {
@@ -782,7 +593,7 @@ class Database {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      await setDoc(doc(db, 'clients', newClient.id), sanitizeForFirestore(newClient));
+      await db.collection('clients').doc(newClient.id).set(sanitizeForFirestore(newClient));
       return newClient;
     } else {
       let needsUpdate = false;
@@ -798,7 +609,7 @@ class Database {
         needsUpdate = true;
       }
       if (needsUpdate) {
-        await updateDoc(doc(db, 'clients', client.id), sanitizeForFirestore(updates));
+        await db.collection('clients').doc(client.id).update(sanitizeForFirestore(updates));
       }
       return client;
     }
@@ -808,7 +619,7 @@ class Database {
     const db = this.getDB();
     const client = await this.findOrCreateClient(form.fullName, form.email, form.phoneOrWhatsapp);
     const newCount = (client.inquiriesCount || 0) + 1;
-    await updateDoc(doc(db, 'clients', client.id), {
+    await db.collection('clients').doc(client.id).update({
       inquiriesCount: newCount,
       updatedAt: new Date().toISOString()
     });
@@ -831,14 +642,14 @@ class Database {
       clientId: client.id
     };
 
-    await setDoc(doc(db, 'inquiries', inquiry.id), sanitizeForFirestore(inquiry));
+    await db.collection('inquiries').doc(inquiry.id).set(sanitizeForFirestore(inquiry));
     await this.addAuditLog('New Inquiry Received', 'visitor', 'inquiry', inquiry.id, `Inquiry ref: ${reference} from ${form.fullName}`);
     return inquiry;
   }
 
   public async getInquiries(search?: string, status?: string): Promise<Inquiry[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'inquiries'));
+    const snaps = await db.collection('inquiries').get();
     let inquiries = snaps.docs.map(d => d.data() as Inquiry);
 
     return inquiries.filter(inq => {
@@ -856,20 +667,20 @@ class Database {
 
   public async getInquiryById(id: string): Promise<Inquiry | null> {
     const db = this.getDB();
-    const snap = await getDoc(doc(db, 'inquiries', id));
-    return snap.exists() ? (snap.data() as Inquiry) : null;
+    const snap = await db.collection('inquiries').doc(id).get();
+    return snap.exists ? (snap.data() as Inquiry) : null;
   }
 
   public async updateInquiry(id: string, updates: Partial<Inquiry>, adminUsername: string): Promise<Inquiry | null> {
     const db = this.getDB();
-    const ref = doc(db, 'inquiries', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('inquiries').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const inq = snap.data() as Inquiry;
     const oldStatus = inq.status;
     const sanitized = sanitizeForFirestore(updates);
-    await updateDoc(ref, sanitized);
+    await ref.update(sanitized);
 
     const updated = { ...inq, ...updates };
     if (updates.status && updates.status !== oldStatus) {
@@ -883,12 +694,12 @@ class Database {
 
   public async deleteInquiry(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const ref = doc(db, 'inquiries', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return false;
+    const ref = db.collection('inquiries').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
 
     const inq = snap.data() as Inquiry;
-    await deleteDoc(ref);
+    await ref.delete();
     await this.addAuditLog('Inquiry Deleted', adminUsername, 'inquiry', id, `Deleted inquiry ref ${inq.reference}`);
     return true;
   }
@@ -950,13 +761,13 @@ class Database {
       updatedAt: new Date().toISOString()
     };
 
-    await setDoc(doc(db, 'bookings', booking.id), sanitizeForFirestore(booking));
+    await db.collection('bookings').doc(booking.id).set(sanitizeForFirestore(booking));
 
     const newBookingsCount = (client.bookingsCount || 0) + 1;
     const newCompletedCount = booking.bookingStatus === 'Completed' ? (client.completedShootsCount || 0) + 1 : (client.completedShootsCount || 0);
     const newTotalRevenue = (client.totalRevenue || 0) + totalPaid;
 
-    await updateDoc(doc(db, 'clients', client.id), {
+    await db.collection('clients').doc(client.id).update({
       bookingsCount: newBookingsCount,
       completedShootsCount: newCompletedCount,
       totalRevenue: newTotalRevenue,
@@ -964,10 +775,10 @@ class Database {
     });
 
     if (data.inquiryId) {
-      const inqRef = doc(db, 'inquiries', data.inquiryId);
-      const inqSnap = await getDoc(inqRef);
-      if (inqSnap.exists()) {
-        await updateDoc(inqRef, {
+      const inqRef = db.collection('inquiries').doc(data.inquiryId);
+      const inqSnap = await inqRef.get();
+      if (inqSnap.exists) {
+        await inqRef.update({
           status: 'Confirmed',
           convertedBookingId: booking.id
         });
@@ -980,7 +791,7 @@ class Database {
 
   public async getBookings(search?: string, status?: string): Promise<Booking[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'bookings'));
+    const snaps = await db.collection('bookings').get();
     let bookings = snaps.docs.map(d => d.data() as Booking);
 
     return bookings.filter(b => {
@@ -998,15 +809,15 @@ class Database {
 
   public async getBookingById(id: string): Promise<Booking | null> {
     const db = this.getDB();
-    const snap = await getDoc(doc(db, 'bookings', id));
-    return snap.exists() ? (snap.data() as Booking) : null;
+    const snap = await db.collection('bookings').doc(id).get();
+    return snap.exists ? (snap.data() as Booking) : null;
   }
 
   public async updateBooking(id: string, updates: Partial<Booking>, adminUsername: string): Promise<Booking | null> {
     const db = this.getDB();
-    const ref = doc(db, 'bookings', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('bookings').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const booking = snap.data() as Booking;
     const oldStatus = booking.bookingStatus;
@@ -1039,13 +850,13 @@ class Database {
 
     merged.updatedAt = new Date().toISOString();
 
-    await setDoc(ref, sanitizeForFirestore(merged));
+    await ref.set(sanitizeForFirestore(merged));
 
     // Recalculate client completed stats and total revenue
     if (booking.clientId) {
-      const clientRef = doc(db, 'clients', booking.clientId);
-      const clientSnap = await getDoc(clientRef);
-      if (clientSnap.exists()) {
+      const clientRef = db.collection('clients').doc(booking.clientId);
+      const clientSnap = await clientRef.get();
+      if (clientSnap.exists) {
         const client = clientSnap.data() as Client;
         let completedShootsCount = client.completedShootsCount || 0;
         if (oldStatus !== 'Completed' && merged.bookingStatus === 'Completed') {
@@ -1055,7 +866,7 @@ class Database {
         }
 
         const totalRevenue = Math.max(0, (client.totalRevenue || 0) + (totalPaid - oldPaid));
-        await updateDoc(clientRef, {
+        await clientRef.update({
           totalRevenue,
           completedShootsCount,
           updatedAt: new Date().toISOString()
@@ -1069,20 +880,20 @@ class Database {
 
   public async deleteBooking(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const ref = doc(db, 'bookings', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return false;
+    const ref = db.collection('bookings').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
 
     const booking = snap.data() as Booking;
-    await deleteDoc(ref);
+    await ref.delete();
 
     // Recalculate associated client statistics accurately from all remaining records
     if (booking.clientId) {
-      const clientRef = doc(db, 'clients', booking.clientId);
-      const clientSnap = await getDoc(clientRef);
-      if (clientSnap.exists()) {
+      const clientRef = db.collection('clients').doc(booking.clientId);
+      const clientSnap = await clientRef.get();
+      if (clientSnap.exists) {
         const client = clientSnap.data() as Client;
-        const allBookingsSnaps = await getDocs(collection(db, 'bookings'));
+        const allBookingsSnaps = await db.collection('bookings').get();
         const remaining = allBookingsSnaps.docs
           .map(d => d.data() as Booking)
           .filter(b => b.clientId === client.id || (client.email && b.clientEmail && b.clientEmail.trim().toLowerCase() === client.email.trim().toLowerCase()));
@@ -1091,7 +902,7 @@ class Database {
         const completedShootsCount = Math.max(0, remaining.filter(b => b.bookingStatus === 'Completed').length);
         const totalRevenue = Math.max(0, remaining.reduce((sum, b) => sum + Number(b.totalPaid || 0), 0));
 
-        await updateDoc(clientRef, {
+        await clientRef.update({
           bookingsCount,
           completedShootsCount,
           totalRevenue,
@@ -1107,7 +918,7 @@ class Database {
   // ==================== CLIENTS ====================
   public async getClients(search?: string): Promise<Client[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'clients'));
+    const snaps = await db.collection('clients').get();
     let clients = snaps.docs.map(d => d.data() as Client);
 
     return clients.filter(c => {
@@ -1124,15 +935,15 @@ class Database {
 
   public async getClientById(id: string): Promise<{ client: Client; inquiries: Inquiry[]; bookings: Booking[] } | null> {
     const db = this.getDB();
-    const clientSnap = await getDoc(doc(db, 'clients', id));
-    if (!clientSnap.exists()) return null;
+    const clientSnap = await db.collection('clients').doc(id).get();
+    if (!clientSnap.exists) return null;
 
     const client = clientSnap.data() as Client;
     const clientEmail = (client.email || '').trim().toLowerCase();
 
     const [inqSnaps, bkSnaps] = await Promise.all([
-      getDocs(collection(db, 'inquiries')),
-      getDocs(collection(db, 'bookings'))
+      db.collection('inquiries').get(),
+      db.collection('bookings').get()
     ]);
 
     const inquiries = inqSnaps.docs
@@ -1150,13 +961,13 @@ class Database {
 
   public async updateClient(id: string, updates: Partial<Client>, adminUsername: string): Promise<Client | null> {
     const db = this.getDB();
-    const ref = doc(db, 'clients', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('clients').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const client = snap.data() as Client;
     const sanitized = sanitizeForFirestore({ ...updates, updatedAt: new Date().toISOString() });
-    await updateDoc(ref, sanitized);
+    await ref.update(sanitized);
 
     const updated = { ...client, ...sanitized };
     await this.addAuditLog('Client Profile Updated', adminUsername, 'client', id, `Updated client ${client.name}`);
@@ -1166,7 +977,7 @@ class Database {
   // ==================== PORTFOLIO ====================
   public async getPortfolio(includeUnpublished: boolean = false): Promise<PortfolioItem[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'portfolio'));
+    const snaps = await db.collection('portfolio').get();
     let items = snaps.docs.map(d => d.data() as (PortfolioItem & { isPublished?: boolean; order: number }));
 
     if (!includeUnpublished) {
@@ -1178,7 +989,7 @@ class Database {
   public async addPortfolioItem(item: Partial<PortfolioItem>, adminUsername: string): Promise<PortfolioItem> {
     const db = this.getDB();
     const id = `photo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const snaps = await getDocs(collection(db, 'portfolio'));
+    const snaps = await db.collection('portfolio').get();
 
     const newItem = {
       id,
@@ -1200,7 +1011,7 @@ class Database {
       order: snaps.size
     };
 
-    await setDoc(doc(db, 'portfolio', id), sanitizeForFirestore(newItem));
+    await db.collection('portfolio').doc(id).set(sanitizeForFirestore(newItem));
     await this.addAuditLog('Portfolio Photo Added', adminUsername, 'portfolio', id, `Added photograph "${newItem.title}"`);
     return newItem;
   }
@@ -1211,12 +1022,12 @@ class Database {
     adminUsername: string
   ): Promise<PortfolioItem | null> {
     const db = this.getDB();
-    const ref = doc(db, 'portfolio', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('portfolio').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const item = snap.data() as PortfolioItem;
-    await updateDoc(ref, sanitizeForFirestore(updates));
+    await ref.update(sanitizeForFirestore(updates));
     const updated = { ...item, ...updates };
 
     await this.addAuditLog('Portfolio Photo Updated', adminUsername, 'portfolio', id, `Updated photograph "${item.title}"`);
@@ -1239,12 +1050,12 @@ class Database {
 
   public async deletePortfolioItem(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const ref = doc(db, 'portfolio', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return false;
+    const ref = db.collection('portfolio').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
 
     const item = snap.data() as PortfolioItem;
-    await deleteDoc(ref);
+    await ref.delete();
     await this.addAuditLog('Portfolio Photo Deleted', adminUsername, 'portfolio', id, `Deleted photograph "${item.title}"`);
 
     // Safe media cleanup: remove storage object if not referenced by any other item
@@ -1265,19 +1076,19 @@ class Database {
 
   public async setHeroImage(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const targetRef = doc(db, 'portfolio', id);
-    const targetSnap = await getDoc(targetRef);
-    if (!targetSnap.exists()) return false;
+    const targetRef = db.collection('portfolio').doc(id);
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) return false;
 
     const targetItem = targetSnap.data() as PortfolioItem;
-    const portfolioSnaps = await getDocs(collection(db, 'portfolio'));
+    const portfolioSnaps = await db.collection('portfolio').get();
 
-    const batch = writeBatch(db);
+    const batch = db.batch();
     portfolioSnaps.docs.forEach(d => {
       batch.update(d.ref, { isHero: d.id === id });
     });
 
-    batch.update(doc(db, 'settings', 'global'), {
+    batch.update(db.collection('settings').doc('global'), {
       heroImage: targetItem.image,
       heroAlt: targetItem.alt
     });
@@ -1289,11 +1100,11 @@ class Database {
 
   public async setPhotographerPortrait(url: string, alt: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const settingsRef = doc(db, 'settings', 'global');
+    const settingsRef = db.collection('settings').doc('global');
     const updates: Record<string, string> = { photographerPortrait: url };
     if (alt) updates.photographerPortraitAlt = alt;
 
-    await updateDoc(settingsRef, updates);
+    await settingsRef.update(updates);
     await this.addAuditLog('Photographer Portrait Changed', adminUsername, 'settings', 'portrait', 'Updated About page portrait photograph');
     return true;
   }
@@ -1301,7 +1112,7 @@ class Database {
   // ==================== SERVICES ====================
   public async getServices(includeDisabled: boolean = false): Promise<ServiceItem[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'services'));
+    const snaps = await db.collection('services').get();
     let list = snaps.docs.map(d => d.data() as (ServiceItem & { isEnabled?: boolean; order: number }));
 
     if (!includeDisabled) {
@@ -1316,7 +1127,7 @@ class Database {
   ): Promise<ServiceItem> {
     const db = this.getDB();
     const id = `srv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const snaps = await getDocs(collection(db, 'services'));
+    const snaps = await db.collection('services').get();
 
     const newService = {
       id,
@@ -1332,7 +1143,7 @@ class Database {
       quoteRangeText: service.quoteRangeText || 'Custom Scoping'
     };
 
-    await setDoc(doc(db, 'services', id), sanitizeForFirestore(newService));
+    await db.collection('services').doc(id).set(sanitizeForFirestore(newService));
     await this.addAuditLog('Service Added', adminUsername, 'service', id, `Added service "${newService.title}"`);
     return newService;
   }
@@ -1343,12 +1154,12 @@ class Database {
     adminUsername: string
   ): Promise<ServiceItem | null> {
     const db = this.getDB();
-    const ref = doc(db, 'services', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('services').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const srv = snap.data() as ServiceItem;
-    await updateDoc(ref, sanitizeForFirestore(updates));
+    await ref.update(sanitizeForFirestore(updates));
     const updated = { ...srv, ...updates };
 
     await this.addAuditLog('Service Updated', adminUsername, 'service', id, `Updated service "${srv.title}"`);
@@ -1357,12 +1168,12 @@ class Database {
 
   public async deleteService(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const ref = doc(db, 'services', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return false;
+    const ref = db.collection('services').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
 
     const srv = snap.data() as ServiceItem;
-    await deleteDoc(ref);
+    await ref.delete();
     await this.addAuditLog('Service Deleted', adminUsername, 'service', id, `Deleted service "${srv.title}"`);
     return true;
   }
@@ -1370,20 +1181,20 @@ class Database {
   // ==================== SETTINGS ====================
   public async getSettings(): Promise<DatabaseSchema['settings']> {
     const db = this.getDB();
-    const snap = await getDoc(doc(db, 'settings', 'global'));
-    if (snap.exists()) {
+    const snap = await db.collection('settings').doc('global').get();
+    if (snap.exists) {
       return snap.data() as DatabaseSchema['settings'];
     }
     const def = getDefaultSettings();
-    await setDoc(doc(db, 'settings', 'global'), sanitizeForFirestore(def));
+    await db.collection('settings').doc('global').set(sanitizeForFirestore(def));
     return def;
   }
 
   public async updateSettings(updates: Partial<DatabaseSchema['settings']>, adminUsername: string): Promise<DatabaseSchema['settings']> {
     const db = this.getDB();
-    const ref = doc(db, 'settings', 'global');
-    await updateDoc(ref, sanitizeForFirestore(updates));
-    const snap = await getDoc(ref);
+    const ref = db.collection('settings').doc('global');
+    await ref.update(sanitizeForFirestore(updates));
+    const snap = await ref.get();
     await this.addAuditLog('Settings Updated', adminUsername, 'settings', 'global', 'Updated contact, socials, or brand settings');
     return snap.data() as DatabaseSchema['settings'];
   }
@@ -1398,7 +1209,7 @@ class Database {
         ...event,
         timestamp: new Date().toISOString()
       };
-      await setDoc(doc(db, 'analyticsEvents', id), sanitizeForFirestore(item));
+      await db.collection('analyticsEvents').doc(id).set(sanitizeForFirestore(item));
     } catch (err) {
       console.error('[DB] Failed to record analytics event:', err);
     }
@@ -1412,7 +1223,7 @@ class Database {
     popularImages: Record<string, number>;
   }> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'analyticsEvents'));
+    const snaps = await db.collection('analyticsEvents').get();
     const events = snaps.docs.map(d => d.data() as AnalyticsEvent);
 
     const eventsByType: Record<string, number> = {};
@@ -1458,7 +1269,7 @@ class Database {
         details,
         timestamp: new Date().toISOString()
       };
-      await setDoc(doc(db, 'auditLogs', id), sanitizeForFirestore(log));
+      await db.collection('auditLogs').doc(id).set(sanitizeForFirestore(log));
     } catch (err) {
       console.error('[DB] Error writing audit log:', err);
     }
@@ -1466,7 +1277,7 @@ class Database {
 
   public async getAuditLogs(): Promise<AuditLog[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'auditLogs'));
+    const snaps = await db.collection('auditLogs').get();
     return snaps.docs
       .map(d => d.data() as AuditLog)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -1476,10 +1287,10 @@ class Database {
   public async getDashboardStats(): Promise<DashboardStats> {
     const db = this.getDB();
     const [inqSnaps, bkSnaps, cliSnaps, portSnaps] = await Promise.all([
-      getDocs(collection(db, 'inquiries')),
-      getDocs(collection(db, 'bookings')),
-      getDocs(collection(db, 'clients')),
-      getDocs(collection(db, 'portfolio'))
+      db.collection('inquiries').get(),
+      db.collection('bookings').get(),
+      db.collection('clients').get(),
+      db.collection('portfolio').get()
     ]);
 
     const inquiries = inqSnaps.docs.map(d => d.data() as Inquiry);
@@ -1529,7 +1340,7 @@ class Database {
       ...record
     };
 
-    await setDoc(doc(db, 'conversionHistory', id), sanitizeForFirestore(item));
+    await db.collection('conversionHistory').doc(id).set(sanitizeForFirestore(item));
     await this.addAuditLog(
       'Currency Converted',
       adminUsername,
@@ -1543,7 +1354,7 @@ class Database {
 
   public async getConversionHistory(limit: number = 50): Promise<CurrencyConversionRecord[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'conversionHistory'));
+    const snaps = await db.collection('conversionHistory').get();
     return snaps.docs
       .map(d => d.data() as CurrencyConversionRecord)
       .sort((a, b) => new Date(b.convertedAt).getTime() - new Date(a.convertedAt).getTime())
@@ -1552,9 +1363,9 @@ class Database {
 
   public async clearConversionHistory(adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'conversionHistory'));
+    const snaps = await db.collection('conversionHistory').get();
     if (!snaps.empty) {
-      const batch = writeBatch(db);
+      const batch = db.batch();
       snaps.docs.forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
@@ -1572,7 +1383,7 @@ class Database {
     paymentMethod?: string;
   }): Promise<Expense[]> {
     const db = this.getDB();
-    const snaps = await getDocs(collection(db, 'expenses'));
+    const snaps = await db.collection('expenses').get();
     let list = snaps.docs.map(d => d.data() as Expense);
 
     if (filter) {
@@ -1614,8 +1425,8 @@ class Database {
 
   public async getExpenseById(id: string): Promise<Expense | null> {
     const db = this.getDB();
-    const snap = await getDoc(doc(db, 'expenses', id));
-    return snap.exists() ? (snap.data() as Expense) : null;
+    const snap = await db.collection('expenses').doc(id).get();
+    return snap.exists ? (snap.data() as Expense) : null;
   }
 
   public async createExpense(
@@ -1639,7 +1450,7 @@ class Database {
       updatedAt: new Date().toISOString()
     };
 
-    await setDoc(doc(db, 'expenses', id), sanitizeForFirestore(expense));
+    await db.collection('expenses').doc(id).set(sanitizeForFirestore(expense));
     await this.addAuditLog(
       'Expense Created',
       adminUsername,
@@ -1653,9 +1464,9 @@ class Database {
 
   public async updateExpense(id: string, updates: Partial<Expense>, adminUsername: string): Promise<Expense | null> {
     const db = this.getDB();
-    const ref = doc(db, 'expenses', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
+    const ref = db.collection('expenses').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
 
     const expense = snap.data() as Expense;
 
@@ -1673,7 +1484,7 @@ class Database {
 
     expense.updatedAt = new Date().toISOString();
 
-    await setDoc(ref, sanitizeForFirestore(expense));
+    await ref.set(sanitizeForFirestore(expense));
     await this.addAuditLog(
       'Expense Updated',
       adminUsername,
@@ -1687,12 +1498,12 @@ class Database {
 
   public async deleteExpense(id: string, adminUsername: string): Promise<boolean> {
     const db = this.getDB();
-    const ref = doc(db, 'expenses', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return false;
+    const ref = db.collection('expenses').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
 
     const removed = snap.data() as Expense;
-    await deleteDoc(ref);
+    await ref.delete();
     await this.addAuditLog(
       'Expense Deleted',
       adminUsername,
@@ -1708,8 +1519,8 @@ class Database {
   public async getFinanceOverview(timeRange: string = 'all', customStart?: string, customEnd?: string): Promise<FinanceOverviewStats> {
     const db = this.getDB();
     const [bkSnaps, expSnaps] = await Promise.all([
-      getDocs(collection(db, 'bookings')),
-      getDocs(collection(db, 'expenses'))
+      db.collection('bookings').get(),
+      db.collection('expenses').get()
     ]);
 
     const allBookings = bkSnaps.docs.map(d => d.data() as Booking);
@@ -1842,8 +1653,8 @@ class Database {
   public async getFinanceAnalytics(timeRange: string = 'this_year', customStart?: string, customEnd?: string): Promise<FinanceAnalyticsData> {
     const db = this.getDB();
     const [bkSnaps, expSnaps] = await Promise.all([
-      getDocs(collection(db, 'bookings')),
-      getDocs(collection(db, 'expenses'))
+      db.collection('bookings').get(),
+      db.collection('expenses').get()
     ]);
 
     const allBookings = bkSnaps.docs.map(d => d.data() as Booking);
@@ -2221,8 +2032,8 @@ class Database {
   }): Promise<FinancialTransaction[]> {
     const db = this.getDB();
     const [bkSnaps, expSnaps] = await Promise.all([
-      getDocs(collection(db, 'bookings')),
-      getDocs(collection(db, 'expenses'))
+      db.collection('bookings').get(),
+      db.collection('expenses').get()
     ]);
 
     const allBookings = bkSnaps.docs.map(d => d.data() as Booking);

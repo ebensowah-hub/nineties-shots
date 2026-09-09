@@ -3,7 +3,7 @@ import { PortfolioItem } from '../types';
 import { ImageWithFallback } from './ImageWithFallback';
 import { MapPin, Calendar, Maximize2 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface PortfolioCardProps {
   item: PortfolioItem;
@@ -18,6 +18,8 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
   layoutVariant = 'standard',
   priority = false
 }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
+
   const getAspectClass = () => {
     switch (layoutVariant) {
       case 'editorial-large':
@@ -40,10 +42,10 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-40px' }}
-      transition={{ duration: 0.7, ease: cinematicEase }}
+      transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
       role="button"
       tabIndex={0}
       onClick={onClick}

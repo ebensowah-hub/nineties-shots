@@ -4,7 +4,7 @@ import { PortfolioCard } from './PortfolioCard';
 import { SectionHeading } from './SectionHeading';
 import { ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface SelectedWorkProps {
   items: PortfolioItem[];
@@ -17,6 +17,7 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
   onOpenLightbox,
   onExploreAll
 }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   // Select featured items or pick first 6 curated items
   const selectedItems = items.slice(0, 6);
 
@@ -43,10 +44,10 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
         {/* Row 1: 1 Hero Wide/Large Image & 1 Tall Portrait */}
         {selectedItems.length >= 2 && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.8, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
             className="grid grid-cols-1 lg:grid-cols-12 gap-8 md:gap-12 items-end"
           >
             <div className="lg:col-span-7">
@@ -70,10 +71,10 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
         {/* Row 2: 2 Balanced Editorial Images with Offset Spacing */}
         {selectedItems.length >= 4 && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.8, delay: 0.1, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.1, ease: cinematicEase }}
             className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 items-center"
           >
             <div className="md:col-span-5 md:col-start-2">
@@ -96,10 +97,10 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
         {/* Row 3: Wide Cinematic Anchor Image */}
         {selectedItems.length >= 5 && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.8, delay: 0.15, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.15, ease: cinematicEase }}
             className="grid grid-cols-1 lg:grid-cols-12 gap-8 md:gap-12"
           >
             <div className="lg:col-span-8 lg:col-start-3">
@@ -115,10 +116,10 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
 
       {/* Bottom Exploration CTA */}
       <motion.div
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: '-40px' }}
-        transition={{ duration: 0.7, ease: cinematicEase }}
+        transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
         className="mt-16 pt-8 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left"
       >
         <p className="text-sm font-mono text-neutral-400">

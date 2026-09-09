@@ -3,7 +3,7 @@ import { heroImage } from '../data/portfolioData';
 import { siteConfig } from '../data/siteConfig';
 import { ArrowDown, ArrowRight } from 'lucide-react';
 import { motion, useScroll, useTransform } from 'motion/react';
-import { filmicEase, cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface HeroProps {
   onViewWork: () => void;
@@ -11,6 +11,7 @@ interface HeroProps {
 }
 
 export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
+  const { reduceMotion, filmicEase, cinematicEase } = useCinematicMotion();
   const containerRef = useRef<HTMLElement>(null);
   const { scrollYProgress } = useScroll({
     target: containerRef,
@@ -30,10 +31,10 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
     >
       {/* Background Hero Photography with subtle filmic scale and restrained parallax */}
       <motion.div
-        style={{ y: imageY, scale: imageScale }}
-        initial={{ scale: 1.08, opacity: 0.7 }}
+        style={reduceMotion ? undefined : { y: imageY, scale: imageScale }}
+        initial={{ scale: reduceMotion ? 1 : 1.08, opacity: reduceMotion ? 1 : 0.7 }}
         animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 2.2, ease: filmicEase }}
+        transition={{ duration: reduceMotion ? 0 : 2.2, ease: filmicEase }}
         className="absolute inset-0 w-full h-full will-change-transform"
       >
         <img
@@ -54,14 +55,14 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
 
       {/* Main Editorial Hero Content */}
       <motion.div
-        style={{ opacity: contentOpacity, y: contentY }}
+        style={reduceMotion ? undefined : { opacity: contentOpacity, y: contentY }}
         className="relative z-10 w-full max-w-7xl mx-auto px-6 md:px-10 h-full flex flex-col justify-between pt-24 sm:pt-32 pb-8 sm:pb-12"
       >
         {/* Top Header Tagline */}
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : -10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.15, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.7, delay: reduceMotion ? 0 : 0.15, ease: cinematicEase }}
           className="flex items-center justify-between"
         >
           <span className="text-[11px] font-mono tracking-[0.3em] text-neutral-300 uppercase">
@@ -76,9 +77,9 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
         <div className="my-auto text-left max-w-4xl">
           <div className="space-y-4">
             <motion.h1
-              initial={{ opacity: 0, y: 32 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 32 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 1.0, delay: 0.28, ease: filmicEase }}
+              transition={{ duration: reduceMotion ? 0 : 1.0, delay: reduceMotion ? 0 : 0.28, ease: filmicEase }}
               className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-bold tracking-[-0.03em] font-heading text-white uppercase leading-[0.9] drop-shadow-lg"
             >
               NINETIES
@@ -87,9 +88,9 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
             </motion.h1>
 
             <motion.p
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.85, delay: 0.45, ease: cinematicEase }}
+              transition={{ duration: reduceMotion ? 0 : 0.85, delay: reduceMotion ? 0 : 0.45, ease: cinematicEase }}
               className="text-lg sm:text-xl md:text-2xl font-light text-neutral-300 tracking-wide font-sans max-w-xl pt-2"
             >
               {siteConfig.tagline}
@@ -99,9 +100,9 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
 
         {/* Bottom Bar: Action CTAs and Restrained Scroll Cue */}
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.6, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.6, ease: cinematicEase }}
           className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 pt-6 border-t border-white/15"
         >
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
@@ -133,8 +134,8 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
             </span>
             <div className="w-8 h-8 rounded-full border border-neutral-700 flex items-center justify-center group-hover:border-white transition-colors">
               <motion.div
-                animate={{ y: [0, 3, 0] }}
-                transition={{ repeat: Infinity, duration: 2.6, ease: 'easeInOut' }}
+                animate={reduceMotion ? { y: 0 } : { y: [0, 3, 0] }}
+                transition={reduceMotion ? { duration: 0 } : { repeat: Infinity, duration: 2.6, ease: 'easeInOut' }}
               >
                 <ArrowDown className="w-3.5 h-3.5" />
               </motion.div>
@@ -145,3 +146,4 @@ export const Hero: React.FC<HeroProps> = ({ onViewWork, onBookShoot }) => {
     </section>
   );
 };
+

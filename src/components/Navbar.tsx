@@ -3,7 +3,7 @@ import { ActivePage, CategorySlug } from '../types';
 import { siteConfig } from '../data/siteConfig';
 import { Menu, X, ArrowUpRight, Instagram, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface NavbarProps {
   activePage: ActivePage;
@@ -11,6 +11,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -92,9 +93,9 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
                   {link.label}
                   {isActive && (
                     <motion.div
-                      layoutId="activeNavIndicator"
+                      layoutId={reduceMotion ? undefined : "activeNavIndicator"}
                       className="absolute bottom-0 left-0 right-0 h-px bg-white"
-                      transition={{ duration: 0.3, ease: cinematicEase }}
+                      transition={{ duration: reduceMotion ? 0 : 0.3, ease: cinematicEase }}
                     />
                   )}
                 </button>
@@ -132,10 +133,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
         {mobileMenuOpen && (
           <motion.div
             id="mobile-nav-menu"
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : -12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.3, ease: cinematicEase }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }}
+            transition={{ duration: reduceMotion ? 0 : 0.3, ease: cinematicEase }}
             className="fixed inset-0 z-30 bg-[#080808]/98 backdrop-blur-xl pt-24 px-8 pb-10 flex flex-col justify-between md:hidden"
           >
             <div className="space-y-6">

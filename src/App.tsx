@@ -20,6 +20,8 @@ import { WhatsAppFloatingButton } from './components/WhatsAppFloatingButton';
 import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminLayout } from './components/admin/AdminLayout';
 import { checkAdminAuthSession, getPublicData, trackEvent } from './lib/api';
+import { AnimatePresence, motion } from 'motion/react';
+import { sceneVariants } from './lib/motion';
 
 export default function App() {
   const [activePage, setActivePage] = useState<ActivePage>('home');
@@ -123,7 +125,7 @@ export default function App() {
     } else {
       window.location.hash = page;
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     trackEvent('page_view', { page, category });
   };
 
@@ -138,7 +140,7 @@ export default function App() {
     setPreselectedService(serviceTitle);
     setActivePage('contact');
     window.location.hash = 'contact';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
     trackEvent('booking_start', { serviceTitle });
   };
 
@@ -188,47 +190,59 @@ export default function App() {
       <Navbar activePage={activePage} onNavigate={handleNavigate} />
 
       {/* Main Content Stage */}
-      <main className="flex-1 w-full">
-        {activePage === 'home' && (
-          <HomeView
-            portfolioItems={livePortfolio}
-            onOpenLightbox={handleOpenLightbox}
-            onNavigate={handleNavigate}
-            onRequestQuote={handleRequestQuote}
-          />
-        )}
+      <main className="flex-1 w-full relative">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activePage}
+            variants={sceneVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="w-full flex-1"
+          >
+            {activePage === 'home' && (
+              <HomeView
+                portfolioItems={livePortfolio}
+                onOpenLightbox={handleOpenLightbox}
+                onNavigate={handleNavigate}
+                onRequestQuote={handleRequestQuote}
+              />
+            )}
 
-        {activePage === 'work' && (
-          <PortfolioView
-            items={livePortfolio}
-            initialCategory={portfolioCategory}
-            onOpenLightbox={handleOpenLightbox}
-          />
-        )}
+            {activePage === 'work' && (
+              <PortfolioView
+                items={livePortfolio}
+                initialCategory={portfolioCategory}
+                onOpenLightbox={handleOpenLightbox}
+                onBookShoot={() => handleNavigate('contact')}
+              />
+            )}
 
-        {activePage === 'about' && (
-          <AboutView
-            onBookShoot={() => handleNavigate('contact')}
-          />
-        )}
+            {activePage === 'about' && (
+              <AboutView
+                onBookShoot={() => handleNavigate('contact')}
+              />
+            )}
 
-        {activePage === 'services' && (
-          <ServicesView
-            onRequestQuote={handleRequestQuote}
-          />
-        )}
+            {activePage === 'services' && (
+              <ServicesView
+                onRequestQuote={handleRequestQuote}
+              />
+            )}
 
-        {activePage === 'contact' && (
-          <ContactView
-            preselectedService={preselectedService}
-          />
-        )}
+            {activePage === 'contact' && (
+              <ContactView
+                preselectedService={preselectedService}
+              />
+            )}
 
-        {activePage === '404' && (
-          <NotFound
-            onBackToWork={() => handleNavigate('work')}
-          />
-        )}
+            {activePage === '404' && (
+              <NotFound
+                onBackToWork={() => handleNavigate('work')}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       {/* Lightbox / Fullscreen Image Viewer Modal */}

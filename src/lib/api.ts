@@ -455,6 +455,7 @@ export async function uploadPortfolioImage(file: File): Promise<{
   size: number;
   mimeType: string;
   storageProvider: string;
+  browserNotice?: string;
 }> {
   const token = getStoredAdminToken();
   const formData = new FormData();

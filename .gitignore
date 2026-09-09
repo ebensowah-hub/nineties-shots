@@ -10,3 +10,5 @@ coverage/
 data/*.json
 data/*.jsonl
 *.tmp
+uploads/
+/uploads/

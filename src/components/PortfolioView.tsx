@@ -5,17 +5,20 @@ import { PortfolioCard } from './PortfolioCard';
 import { SectionHeading } from './SectionHeading';
 import { LayoutGrid, Grid3X3, SlidersHorizontal, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface PortfolioViewProps {
   items: PortfolioItem[];
   initialCategory?: CategorySlug;
   onOpenLightbox: (item: PortfolioItem) => void;
+  onBookShoot?: () => void;
 }
 
 export const PortfolioView: React.FC<PortfolioViewProps> = ({
   items,
   initialCategory = 'all',
-  onOpenLightbox
+  onOpenLightbox,
+  onBookShoot
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<CategorySlug>(initialCategory);
   const [layoutMode, setLayoutMode] = useState<'editorial' | 'grid'>('editorial');
@@ -81,26 +84,26 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
         </div>
 
         {/* Search & Layout View Switcher */}
-        <div className="flex items-center gap-3 self-end lg:self-center">
+        <div className="flex items-center justify-between gap-3 w-full lg:w-auto">
           {/* Search box */}
-          <div className="relative">
+          <div className="relative flex-1 sm:flex-initial">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search frames..."
-              className="bg-neutral-950 border border-neutral-800 pl-9 pr-3 py-1.5 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-neutral-500 w-36 sm:w-48 font-mono"
+              className="bg-neutral-950 border border-neutral-800 pl-9 pr-3 py-2 sm:py-1.5 text-base sm:text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-neutral-500 w-full sm:w-48 font-mono"
             />
           </div>
 
           {/* Layout switch buttons */}
-          <div className="flex items-center border border-neutral-800 bg-neutral-950 p-0.5">
+          <div className="flex items-center border border-neutral-800 bg-neutral-950 p-0.5 shrink-0">
             <button
               onClick={() => setLayoutMode('editorial')}
               aria-label="Editorial Layout"
               title="Editorial Asymmetric Layout"
-              className={`p-1.5 transition-colors ${
+              className={`p-2 sm:p-1.5 transition-colors min-h-[36px] min-w-[36px] sm:min-h-0 sm:min-w-0 flex items-center justify-center ${
                 layoutMode === 'editorial' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-white'
               }`}
             >
@@ -110,7 +113,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               onClick={() => setLayoutMode('grid')}
               aria-label="Uniform Grid Layout"
               title="Uniform 3-Column Grid"
-              className={`p-1.5 transition-colors ${
+              className={`p-2 sm:p-1.5 transition-colors min-h-[36px] min-w-[36px] sm:min-h-0 sm:min-w-0 flex items-center justify-center ${
                 layoutMode === 'grid' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-white'
               }`}
             >
@@ -148,10 +151,10 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               <motion.div
                 key={item.id}
                 layout
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.3 }}
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.4, ease: cinematicEase }}
               >
                 <PortfolioCard
                   item={item}
@@ -195,10 +198,10 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
                 <motion.div
                   key={item.id}
                   layout
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 20 }}
-                  transition={{ duration: 0.35, delay: index * 0.04 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.45, delay: Math.min(index * 0.03, 0.2), ease: cinematicEase }}
                   className={colSpan}
                 >
                   <PortfolioCard
@@ -210,6 +213,35 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               );
             })}
           </AnimatePresence>
+        </motion.div>
+      )}
+
+      {/* Editorial Conversion / Commission Callout */}
+      {onBookShoot && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.7, ease: cinematicEase }}
+          className="mt-16 sm:mt-24 p-6 sm:p-10 md:p-12 border border-neutral-800 bg-neutral-950 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left"
+        >
+          <div className="space-y-1 max-w-xl">
+            <span className="text-[10px] font-mono tracking-[0.25em] text-neutral-500 uppercase block">
+              COMMISSION AN ARCHIVE
+            </span>
+            <h3 className="text-xl sm:text-2xl font-heading uppercase text-white tracking-wide">
+              Ready to create something remarkable?
+            </h3>
+            <p className="text-xs sm:text-sm text-neutral-400 font-light leading-relaxed">
+              Accepting editorial portraits, authentic lifestyle narratives, and creative campaigns for 2026.
+            </p>
+          </div>
+          <button
+            onClick={onBookShoot}
+            className="w-full sm:w-auto px-8 py-3.5 bg-white text-black text-xs font-bold uppercase tracking-[0.2em] hover:bg-neutral-200 transition-colors whitespace-nowrap min-h-[44px] flex items-center justify-center cursor-pointer"
+          >
+            Commission a Shoot
+          </button>
         </motion.div>
       )}
     </div>

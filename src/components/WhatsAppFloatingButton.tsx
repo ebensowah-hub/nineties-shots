@@ -13,7 +13,7 @@ export const WhatsAppFloatingButton: React.FC = () => {
   const whatsappUrl = `https://wa.me/${cleanNumber}?text=${text}`;
 
   return (
-    <div className="fixed bottom-6 right-6 z-30 flex items-center gap-3">
+    <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom,1.5rem))] right-[max(1.5rem,env(safe-area-inset-right,1.5rem))] z-30 flex items-center gap-3">
       {/* Optional contextual pop-in tooltip */}
       {showTooltip && (
         <div className="hidden sm:flex items-center gap-2 bg-neutral-900 border border-neutral-800 text-white text-xs font-mono px-3.5 py-2 shadow-2xl animate-fade-in">

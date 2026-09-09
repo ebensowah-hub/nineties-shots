@@ -5,7 +5,7 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { db } from './src/server/db';
 import { AdminUser } from './src/types';
-import { uploadPortfolioImage, MAX_FILE_SIZE_BYTES } from './src/server/storageService';
+import { uploadPortfolioImage, MAX_FILE_SIZE_BYTES, checkStorageStatus } from './src/server/storageService';
 import {
   getLiveRateToGHS,
   getAllRatesToGHS,
@@ -736,7 +736,8 @@ async function startServer() {
           filename: result.filename,
           size: result.size,
           mimeType: result.mimeType,
-          storageProvider: result.storageProvider
+          storageProvider: result.storageProvider,
+          browserNotice: result.browserNotice
         });
       } catch (err: any) {
         console.error('[PORTFOLIO UPLOAD ERROR]', err.message);
@@ -744,6 +745,16 @@ async function startServer() {
       }
     }
   );
+
+  // Storage Diagnostic Status (Authenticated Admins Only)
+  app.get('/api/admin/portfolio/storage-status', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const status = await checkStorageStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve storage status' });
+    }
+  });
 
   // Services Management
   app.get('/api/admin/services', requireAdminAuth, async (req: AuthenticatedRequest, res) => {

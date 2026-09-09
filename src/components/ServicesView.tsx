@@ -3,6 +3,8 @@ import { servicesData } from '../data/servicesData';
 import { SectionHeading } from './SectionHeading';
 import { ImageWithFallback } from './ImageWithFallback';
 import { ArrowRight, CheckCircle2, Sparkles } from 'lucide-react';
+import { motion } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface ServicesViewProps {
   onRequestQuote: (serviceTitle: string) => void;
@@ -24,9 +26,13 @@ export const ServicesView: React.FC<ServicesViewProps> = ({ onRequestQuote }) =>
           const isReversed = index % 2 === 1;
 
           return (
-            <div
+            <motion.div
               key={service.id}
               id={`service-${service.id}`}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-50px' }}
+              transition={{ duration: 0.8, ease: cinematicEase }}
               className="border-t border-neutral-900 pt-12 md:pt-16"
             >
               <div className={`grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center ${
@@ -38,7 +44,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({ onRequestQuote }) =>
                     <ImageWithFallback
                       src={service.sampleImage}
                       alt={`NINETIES SHOTS — ${service.title}`}
-                      className="w-full aspect-[4/5] object-cover transition-transform duration-700 group-hover:scale-105"
+                      className="w-full aspect-[4/5] object-cover transition-transform duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.03]"
                     />
                     <div className="absolute top-4 left-4">
                       <span className="px-2.5 py-1 bg-black/70 text-[9px] font-mono uppercase tracking-widest text-neutral-300 border border-neutral-800">
@@ -102,13 +108,19 @@ export const ServicesView: React.FC<ServicesViewProps> = ({ onRequestQuote }) =>
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           );
         })}
       </div>
 
       {/* Tailored Inquiries Note */}
-      <div className="mt-24 p-8 md:p-12 border border-neutral-800 bg-neutral-950/60 text-center max-w-3xl mx-auto">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: '-40px' }}
+        transition={{ duration: 0.7, ease: cinematicEase }}
+        className="mt-24 p-8 md:p-12 border border-neutral-800 bg-neutral-950/60 text-center max-w-3xl mx-auto"
+      >
         <Sparkles className="w-6 h-6 text-neutral-400 mx-auto mb-3" />
         <h4 className="text-xl font-heading uppercase text-white tracking-wide">
           Bespoke Creative Concepts
@@ -122,7 +134,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({ onRequestQuote }) =>
         >
           Inquire Custom Photo Shoot
         </button>
-      </div>
+      </motion.div>
     </div>
   );
 };

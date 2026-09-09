@@ -8,8 +8,9 @@ import { Hero } from './Hero';
 import { SelectedWork } from './SelectedWork';
 import { PortfolioCard } from './PortfolioCard';
 import { ImageWithFallback } from './ImageWithFallback';
-import { ArrowRight, ArrowUpRight, CheckCircle2, Quote, Sparkles } from 'lucide-react';
-import { motion } from 'motion/react';
+import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface HomeViewProps {
   portfolioItems: PortfolioItem[];
@@ -57,34 +58,57 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* 3. Short Brand Statement (Dramatic Typography & High Contrast) */}
       <section className="py-24 md:py-32 bg-[#060606] border-y border-neutral-900/80 px-6 md:px-10">
         <div className="max-w-5xl mx-auto space-y-8 text-left">
-          <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block">
+          <motion.span
+            initial={{ opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{ duration: 0.7, ease: cinematicEase }}
+            className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block"
+          >
             THE MANIFESTO // NINETIES SHOTS
-          </span>
-          <h2 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-heading font-light text-white tracking-tight uppercase leading-[1.05]">
+          </motion.span>
+          <motion.h2
+            initial={{ opacity: 0, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{ duration: 0.85, delay: 0.1, ease: cinematicEase }}
+            className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-heading font-light text-white tracking-tight uppercase leading-[1.05]"
+          >
             &ldquo;WE DO NOT JUST CAPTURE WHAT IT LOOKED LIKE. WE CAPTURE THE WAY IT FELT.&rdquo;
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 text-neutral-400 font-light text-base md:text-lg leading-relaxed">
+          </motion.h2>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{ duration: 0.8, delay: 0.25, ease: cinematicEase }}
+            className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 text-neutral-400 font-light text-base md:text-lg leading-relaxed"
+          >
             <p>
               Light, motion, and raw human presence. NINETIES SHOTS strips away algorithmic gloss to uncover timeless visual storytelling across portraits, lifestyle, and creative photo shoots.
             </p>
             <p>
               Every frame is intentional. Grounded in 35mm discipline and contemporary medium format resolution, we create imagery that commands attention and stays memorable.
             </p>
-          </div>
+          </motion.div>
         </div>
       </section>
 
       {/* 4. Featured Category Spotlight */}
       <section className="py-24 md:py-32 px-6 md:px-10 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7, ease: cinematicEase }}
+          >
             <span className="text-[11px] font-mono tracking-[0.25em] text-neutral-500 uppercase block mb-2">
               CURATED SPOTLIGHT
             </span>
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-heading text-white uppercase tracking-tight">
               Disciplines in Focus
             </h2>
-          </div>
+          </motion.div>
 
           {/* Quick discipline switchers */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
@@ -95,7 +119,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <button
                   key={cat}
                   onClick={() => setActiveSpotlightCat(cat)}
-                  className={`px-3.5 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors border ${
+                  className={`px-3.5 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors border relative ${
                     isActive
                       ? 'bg-white text-black border-white font-semibold'
                       : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:border-neutral-600 hover:text-white'
@@ -108,17 +132,26 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
 
-        {/* 3 Featured Spotlight Frames */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
-          {spotlightItems.map(item => (
-            <PortfolioCard
-              key={item.id}
-              item={item}
-              onClick={() => onOpenLightbox(item)}
-              layoutVariant="standard"
-            />
-          ))}
-        </div>
+        {/* 3 Featured Spotlight Frames with seamless cross-dissolve transition */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeSpotlightCat}
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.35, ease: cinematicEase }}
+            className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8"
+          >
+            {spotlightItems.map(item => (
+              <PortfolioCard
+                key={item.id}
+                item={item}
+                onClick={() => onOpenLightbox(item)}
+                layoutVariant="standard"
+              />
+            ))}
+          </motion.div>
+        </AnimatePresence>
 
         <div className="mt-8 text-right">
           <button
@@ -126,7 +159,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-neutral-300 hover:text-white group"
           >
             <span>View all {activeSpotlightCat} works</span>
-            <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+            <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
           </button>
         </div>
       </section>
@@ -135,7 +168,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <section className="py-24 md:py-32 bg-neutral-950/80 border-t border-neutral-900 px-6 md:px-10">
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
           {/* Portrait frame */}
-          <div className="lg:col-span-5 order-2 lg:order-1">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{ duration: 0.8, ease: cinematicEase }}
+            className="lg:col-span-5 order-2 lg:order-1"
+          >
             <div className="border border-neutral-800 bg-neutral-950 p-3">
               <ImageWithFallback
                 src={photographerPortrait.url}
@@ -147,10 +186,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <span>NINETIES SHOTS</span>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* Philosophy text */}
-          <div className="lg:col-span-7 space-y-6 order-1 lg:order-2">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-40px' }}
+            transition={{ duration: 0.8, delay: 0.15, ease: cinematicEase }}
+            className="lg:col-span-7 space-y-6 order-1 lg:order-2"
+          >
             <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block">
               BEHIND THE BRAND
             </span>
@@ -172,21 +217,26 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       </section>
 
       {/* 6. Services Preview (Compact Editorial Strip) */}
       <section className="py-24 md:py-32 px-6 md:px-10 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-16">
-          <div>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.7, ease: cinematicEase }}
+          >
             <span className="text-[11px] font-mono tracking-[0.25em] text-neutral-500 uppercase block mb-2">
               COMMISSIONS & SCOPES
             </span>
             <h2 className="text-3xl sm:text-4xl md:text-5xl font-heading text-white uppercase tracking-tight">
               Services
             </h2>
-          </div>
+          </motion.div>
           <button
             onClick={() => onNavigate('services')}
             className="inline-flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-neutral-300 hover:text-white"
@@ -198,8 +248,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           {servicesData.slice(0, 3).map((service, index) => (
-            <div
+            <motion.div
               key={service.id}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-40px' }}
+              transition={{ duration: 0.65, delay: index * 0.12, ease: cinematicEase }}
               className="p-8 bg-neutral-950 border border-neutral-800 flex flex-col justify-between hover:border-neutral-600 transition-colors group"
             >
               <div className="space-y-4">
@@ -224,14 +278,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <ArrowUpRight className="w-3 h-3" />
                 </button>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
       </section>
 
       {/* 7. Booking & Direct Commission CTA Banner */}
       <section className="py-24 md:py-32 bg-[#060606] border-t border-neutral-900 px-6 md:px-10">
-        <div className="max-w-5xl mx-auto text-center space-y-8">
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.8, ease: cinematicEase }}
+          className="max-w-5xl mx-auto text-center space-y-8"
+        >
           <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block">
             COMMISSION INQUIRIES 2026
           </span>
@@ -255,7 +315,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Explore Portfolio
             </button>
           </div>
-        </div>
+        </motion.div>
       </section>
     </div>
   );

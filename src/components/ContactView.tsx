@@ -15,17 +15,28 @@ import {
   AlertCircle,
   ExternalLink
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface ContactViewProps {
   preselectedService?: string;
 }
 
 export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) => {
+  const mapServiceToShootType = (service?: string): string => {
+    if (!service) return 'Portraits';
+    const s = service.toLowerCase();
+    if (s.includes('portrait')) return 'Portraits';
+    if (s.includes('lifestyle')) return 'Lifestyle';
+    if (s.includes('campaign') || s.includes('photo shoot') || s.includes('photo-shoot')) return 'Photo Shoots';
+    return service;
+  };
+
   const [formData, setFormData] = useState<InquiryFormData>({
     fullName: '',
     email: '',
     phoneOrWhatsapp: '',
-    shootType: preselectedService || 'Portraits',
+    shootType: mapServiceToShootType(preselectedService),
     preferredDate: '',
     location: '',
     budgetRange: '',
@@ -39,7 +50,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
 
   useEffect(() => {
     if (preselectedService) {
-      setFormData(prev => ({ ...prev, shootType: preselectedService }));
+      setFormData(prev => ({ ...prev, shootType: mapServiceToShootType(preselectedService) }));
     }
   }, [preselectedService]);
 
@@ -126,7 +137,13 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16">
         {/* Left Column: Direct Info & WhatsApp CTA */}
-        <div className="lg:col-span-5 space-y-8">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.8, ease: cinematicEase }}
+          className="lg:col-span-5 space-y-8"
+        >
           <div className="space-y-4">
             <span className="text-[11px] font-mono tracking-[0.25em] text-neutral-500 uppercase">
               DIRECT CHANNELS
@@ -206,14 +223,28 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
               </div>
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* Right Column: Inquiry Booking Form */}
-        <div className="lg:col-span-7">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.8, delay: 0.1, ease: cinematicEase }}
+          className="lg:col-span-7"
+        >
           <div className="p-8 md:p-10 bg-neutral-950 border border-neutral-800">
+            <AnimatePresence mode="wait">
             {isSubmitted ? (
               /* Submission Success State */
-              <div className="py-8 text-center space-y-6">
+              <motion.div
+                key="success"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.4, ease: cinematicEase }}
+                className="py-8 text-center space-y-6"
+              >
                 <div className="w-14 h-14 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center mx-auto text-white">
                   <CheckCircle2 className="w-7 h-7 text-emerald-400" />
                 </div>
@@ -230,8 +261,29 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     <span className="font-mono text-white bg-neutral-900 px-2 py-0.5 border border-neutral-800">
                       {submissionRef}
                     </span>
-                    . We will review your project brief and follow up shortly.
+                    .
                   </p>
+                </div>
+
+                {/* What Happens Next 3-Step Reassurance */}
+                <div className="max-w-md mx-auto p-4 bg-neutral-900/60 border border-neutral-800 text-left space-y-3">
+                  <span className="text-[10px] font-mono tracking-widest uppercase text-neutral-400 block border-b border-neutral-800 pb-2">
+                    What to Expect Next
+                  </span>
+                  <ul className="space-y-2 text-xs font-mono text-neutral-300">
+                    <li className="flex items-start gap-2">
+                      <span className="text-white font-bold">01.</span>
+                      <span><strong className="text-white">Review:</strong> We examine your creative concept and date availability within 24–48 hours.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-white font-bold">02.</span>
+                      <span><strong className="text-white">Consultation:</strong> You receive a direct response with tailored production scopes via Email or WhatsApp.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-white font-bold">03.</span>
+                      <span><strong className="text-white">Confirmation:</strong> Your shoot date is secured with an official commission contract.</span>
+                    </li>
+                  </ul>
                 </div>
 
                 <div className="pt-6 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -242,14 +294,14 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                         fullName: '',
                         email: '',
                         phoneOrWhatsapp: '',
-                        shootType: 'Editorial & Campaigns',
+                        shootType: 'Portraits',
                         preferredDate: '',
                         location: '',
                         budgetRange: '',
                         message: ''
                       });
                     }}
-                    className="px-6 py-2.5 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-xs font-mono uppercase tracking-wider text-neutral-300 transition-colors"
+                    className="w-full sm:w-auto px-6 py-3 bg-neutral-900 border border-neutral-800 hover:border-neutral-600 text-xs font-mono uppercase tracking-wider text-neutral-300 transition-colors min-h-[44px]"
                   >
                     Send Another Inquiry
                   </button>
@@ -258,15 +310,23 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     href={getWhatsAppLink()}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-6 py-2.5 bg-white text-black text-xs font-bold uppercase tracking-wider hover:bg-neutral-200 transition-colors"
+                    className="w-full sm:w-auto px-6 py-3 bg-white text-black text-xs font-bold uppercase tracking-wider hover:bg-neutral-200 transition-colors min-h-[44px] flex items-center justify-center"
                   >
                     Quick WhatsApp Follow-up
                   </a>
                 </div>
-              </div>
+              </motion.div>
             ) : (
               /* Active Form */
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <motion.form
+                key="form"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.4, ease: cinematicEase }}
+                onSubmit={handleSubmit}
+                className="space-y-6"
+              >
                 <div className="flex items-center justify-between border-b border-neutral-900 pb-4">
                   <h4 className="text-lg font-heading text-white uppercase tracking-wide">
                     Commission Brief
@@ -293,10 +353,12 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                       type="text"
                       name="fullName"
                       required
+                      autoComplete="name"
+                      autoCapitalize="words"
                       value={formData.fullName}
                       onChange={handleChange}
                       placeholder="e.g. Jordan Hayes"
-                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
+                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
                     />
                   </div>
 
@@ -308,10 +370,13 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                       type="email"
                       name="email"
                       required
+                      autoComplete="email"
+                      autoCapitalize="none"
+                      spellCheck={false}
                       value={formData.email}
                       onChange={handleChange}
                       placeholder="name@organization.com"
-                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
+                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
                     />
                   </div>
                 </div>
@@ -325,10 +390,11 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     <input
                       type="tel"
                       name="phoneOrWhatsapp"
+                      autoComplete="tel"
                       value={formData.phoneOrWhatsapp}
                       onChange={handleChange}
                       placeholder="020 806 6924"
-                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
+                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
                     />
                   </div>
 
@@ -340,7 +406,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                       name="shootType"
                       value={formData.shootType}
                       onChange={handleChange}
-                      className="w-full bg-neutral-900 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
+                      className="w-full bg-neutral-900 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
                     >
                       {shootTypes.map(type => (
                         <option key={type} value={type}>
@@ -362,7 +428,8 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                       name="preferredDate"
                       value={formData.preferredDate}
                       onChange={handleChange}
-                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
+                      style={{ colorScheme: 'dark' }}
+                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
                     />
                   </div>
 
@@ -373,10 +440,11 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     <input
                       type="text"
                       name="location"
+                      autoComplete="address-level2"
                       value={formData.location}
                       onChange={handleChange}
-                      placeholder="e.g. London / Studio / On-site"
-                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
+                      placeholder="e.g. Accra / Studio / On-site / Worldwide"
+                      className="w-full bg-neutral-900/80 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors"
                     />
                   </div>
                 </div>
@@ -390,7 +458,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     name="budgetRange"
                     value={formData.budgetRange}
                     onChange={handleChange}
-                    className="w-full bg-neutral-900 border border-neutral-800 px-4 py-3 text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
+                    className="w-full bg-neutral-900 border border-neutral-800 px-4 py-3 text-base sm:text-sm text-neutral-100 focus:outline-none focus:border-white transition-colors"
                   >
                     {budgetOptions.map(opt => (
                       <option key={opt} value={opt}>
@@ -412,7 +480,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     value={formData.message}
                     onChange={handleChange}
                     placeholder="Tell us about the concept, mood, subject, timeline, or any specific deliverables you need..."
-                    className="w-full bg-neutral-900/80 border border-neutral-800 p-4 text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors resize-y"
+                    className="w-full bg-neutral-900/80 border border-neutral-800 p-4 text-base sm:text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-white transition-colors resize-y"
                   />
                 </div>
 
@@ -420,7 +488,7 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full py-4 bg-white text-black text-xs font-bold uppercase tracking-[0.2em] hover:bg-neutral-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full py-4 bg-white text-black text-xs font-bold uppercase tracking-[0.2em] hover:bg-neutral-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer min-h-[48px]"
                 >
                   {isSubmitting ? (
                     <>
@@ -434,10 +502,11 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
                     </>
                   )}
                 </button>
-              </form>
+              </motion.form>
             )}
+            </AnimatePresence>
           </div>
-        </div>
+        </motion.div>
       </div>
     </div>
   );

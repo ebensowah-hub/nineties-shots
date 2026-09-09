@@ -114,8 +114,16 @@ async function runPreflight() {
     serverLogs += text;
   });
 
-  // Wait up to 3.5 seconds for startup and Firestore connection
-  await new Promise((r) => setTimeout(r, 3500));
+  // Wait up to 10 seconds for startup and Firestore connection
+  for (let i = 0; i < 20; i++) {
+    try {
+      const ping = await fetch(`http://127.0.0.1:${TEST_PORT}/api/health`);
+      if (ping.status === 200) break;
+    } catch {
+      // Wait for server to bind port
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
 
   try {
     // A. Health check

@@ -3,6 +3,7 @@ import { ActivePage, CategorySlug } from '../types';
 import { siteConfig } from '../data/siteConfig';
 import { Menu, X, ArrowUpRight, Instagram, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface NavbarProps {
   activePage: ActivePage;
@@ -22,6 +23,27 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Lock body scroll and listen for Escape key when mobile menu is open
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [mobileMenuOpen]);
+
   const navLinks: { label: string; page: ActivePage }[] = [
     { label: 'Work', page: 'work' },
     { label: 'About', page: 'about' },
@@ -32,7 +54,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
   const handleNavClick = (page: ActivePage) => {
     onNavigate(page);
     setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -73,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
                     <motion.div
                       layoutId="activeNavIndicator"
                       className="absolute bottom-0 left-0 right-0 h-px bg-white"
-                      transition={{ duration: 0.25 }}
+                      transition={{ duration: 0.3, ease: cinematicEase }}
                     />
                   )}
                 </button>
@@ -97,7 +118,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
               onClick={() => setMobileMenuOpen(prev => !prev)}
               aria-label={mobileMenuOpen ? 'Close Menu' : 'Open Menu'}
               aria-expanded={mobileMenuOpen}
-              className="p-2.5 text-neutral-300 hover:text-white border border-neutral-800 bg-neutral-950/60"
+              aria-controls="mobile-nav-menu"
+              className="p-2.5 text-neutral-300 hover:text-white border border-neutral-800 bg-neutral-950/60 min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -109,10 +131,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
       <AnimatePresence>
         {mobileMenuOpen && (
           <motion.div
-            initial={{ opacity: 0, y: -20 }}
+            id="mobile-nav-menu"
+            initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.25, ease: 'easeOut' }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.3, ease: cinematicEase }}
             className="fixed inset-0 z-30 bg-[#080808]/98 backdrop-blur-xl pt-24 px-8 pb-10 flex flex-col justify-between md:hidden"
           >
             <div className="space-y-6">

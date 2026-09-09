@@ -2,6 +2,8 @@ import React from 'react';
 import { PortfolioItem } from '../types';
 import { ImageWithFallback } from './ImageWithFallback';
 import { MapPin, Calendar, Maximize2 } from 'lucide-react';
+import { motion } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface PortfolioCardProps {
   item: PortfolioItem;
@@ -37,13 +39,17 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
   };
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-40px' }}
+      transition={{ duration: 0.7, ease: cinematicEase }}
       role="button"
       tabIndex={0}
       onClick={onClick}
       onKeyDown={handleKeyDown}
       data-cursor="VIEW"
-      className="group relative block w-full overflow-hidden bg-neutral-950 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white transition-all duration-500 text-left"
+      className="group relative block w-full overflow-hidden bg-neutral-950 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-white text-left"
       aria-label={`View photograph: ${item.title}`}
     >
       <div className={`relative w-full overflow-hidden ${getAspectClass()}`}>
@@ -52,14 +58,14 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
           thumbnail={item.thumbnail}
           alt={item.alt || item.title}
           priority={priority}
-          className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.03]"
+          className="w-full h-full object-cover transition-transform duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-[1.035]"
         />
 
         {/* Minimalist gradient vignette for legibility */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
         {/* Hover metadata & caption reveal */}
-        <div className="absolute inset-x-0 bottom-0 p-5 md:p-6 flex flex-col justify-end transform translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 ease-out pointer-events-none">
+        <div className="absolute inset-x-0 bottom-0 p-5 md:p-6 flex flex-col justify-end transform translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] pointer-events-none">
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-1">
               <span className="text-[10px] tracking-[0.25em] text-neutral-300 uppercase font-mono">
@@ -70,7 +76,7 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
               </h3>
             </div>
             
-            <div className="w-8 h-8 rounded-full border border-white/40 flex items-center justify-center text-white/90 group-hover:border-white transition-colors">
+            <div className="w-8 h-8 rounded-full border border-white/40 flex items-center justify-center text-white/90 group-hover:border-white transition-colors duration-300">
               <Maximize2 className="w-3.5 h-3.5" />
             </div>
           </div>
@@ -94,7 +100,7 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
         </div>
 
         {/* Subtle static category tag visible before hover */}
-        <div className="absolute top-4 left-4 group-hover:opacity-0 transition-opacity duration-300 pointer-events-none">
+        <div className="absolute top-4 left-4 group-hover:opacity-0 transition-opacity duration-400 pointer-events-none">
           <span className="px-2.5 py-1 bg-black/60 backdrop-blur-sm text-[9px] font-mono tracking-widest uppercase text-neutral-300 border border-neutral-800/80">
             {item.categoryLabel}
           </span>
@@ -111,6 +117,6 @@ export const PortfolioCard: React.FC<PortfolioCardProps> = ({
           {item.categoryLabel}
         </span>
       </div>
-    </div>
+    </motion.div>
   );
 };

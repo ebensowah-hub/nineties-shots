@@ -1,4 +1,6 @@
 import React from 'react';
+import { motion } from 'motion/react';
+import { cinematicEase, hairlineVariants } from '../lib/motion';
 
 interface SectionHeadingProps {
   number?: string;
@@ -22,7 +24,13 @@ export const SectionHeading: React.FC<SectionHeadingProps> = ({
   return (
     <div className={`mb-12 md:mb-16 ${className}`}>
       <div className={`flex flex-col ${align === 'center' ? 'items-center text-center' : align === 'between' ? 'md:flex-row md:items-end md:justify-between gap-6' : 'items-start text-left'}`}>
-        <div className="max-w-3xl">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-50px' }}
+          transition={{ duration: 0.75, ease: cinematicEase }}
+          className="max-w-3xl"
+        >
           {(number || tag) && (
             <div className="flex items-center gap-3 mb-3">
               {number && (
@@ -47,15 +55,28 @@ export const SectionHeading: React.FC<SectionHeadingProps> = ({
               {subtitle}
             </p>
           )}
-        </div>
+        </motion.div>
 
         {children && (
-          <div className="mt-6 md:mt-0 flex-shrink-0">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-50px' }}
+            transition={{ duration: 0.75, delay: 0.15, ease: cinematicEase }}
+            className="mt-6 md:mt-0 flex-shrink-0"
+          >
             {children}
-          </div>
+          </motion.div>
         )}
       </div>
-      <div className="w-full h-px bg-neutral-800/80 mt-8" />
+
+      <motion.div
+        variants={hairlineVariants}
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: '-50px' }}
+        className="w-full h-px bg-neutral-800/80 mt-8 origin-left"
+      />
     </div>
   );
 };

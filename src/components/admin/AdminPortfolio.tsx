@@ -62,10 +62,44 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  const validateSelectedFile = (file: File): { valid: boolean; error?: string } => {
+    const name = file.name.toLowerCase();
+    const type = file.type.toLowerCase();
+
+    // Explicit SVG rejection to prevent XSS
+    if (type === 'image/svg+xml' || name.endsWith('.svg')) {
+      return {
+        valid: false,
+        error: 'SVG files are excluded for security reasons to prevent embedded active scripts and cross-site scripting (XSS). Please upload raster photograph formats (JPEG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC).'
+      };
+    }
+
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.avif', '.heic', '.heif'];
+    const hasValidExt = validExtensions.some(ext => name.endsWith(ext));
+    const isImageMime = type.startsWith('image/') || type === '';
+
+    if (!hasValidExt && !isImageMime) {
+      return {
+        valid: false,
+        error: 'Invalid format. Supported photographic formats: JPG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC.'
+      };
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      return {
+        valid: false,
+        error: 'File size exceeds the 15MB limit.'
+      };
+    }
+
+    return { valid: true };
+  };
 
   // Base official categories + any custom categories added dynamically
   const baseCategories: { id: CategorySlug; name: string }[] = [
@@ -101,6 +135,7 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     setPreviewUrl(null);
     setSelectedFileName(null);
     setUploadError(null);
+    setUploadNotice(null);
     setUploadSuccess(false);
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -125,6 +160,7 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     setPreviewUrl(item.image);
     setSelectedFileName(null);
     setUploadError(null);
+    setUploadNotice(null);
     setUploadSuccess(true);
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -145,18 +181,14 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-    if (!allowedTypes.includes(file.type.toLowerCase())) {
-      setUploadError('Invalid format. Only JPG, PNG, and WebP images are permitted.');
-      return;
-    }
-
-    if (file.size > 15 * 1024 * 1024) {
-      setUploadError('File size exceeds the 15MB limit.');
+    const validation = validateSelectedFile(file);
+    if (!validation.valid) {
+      setUploadError(validation.error || 'Invalid photograph file.');
       return;
     }
 
     setUploadError(null);
+    setUploadNotice(null);
     setUploadSuccess(false);
     setSelectedFileName(file.name);
 
@@ -176,6 +208,9 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
       const res = await uploadPortfolioImage(file);
       setFormImage(res.url);
       setUploadSuccess(true);
+      if (res.browserNotice) {
+        setUploadNotice(res.browserNotice);
+      }
       setIsUploading(false);
     } catch (err: any) {
       setIsUploading(false);
@@ -198,18 +233,14 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-    if (!allowedTypes.includes(file.type.toLowerCase())) {
-      setUploadError('Invalid format. Only JPG, PNG, and WebP images are permitted.');
-      return;
-    }
-
-    if (file.size > 15 * 1024 * 1024) {
-      setUploadError('File size exceeds the 15MB limit.');
+    const validation = validateSelectedFile(file);
+    if (!validation.valid) {
+      setUploadError(validation.error || 'Invalid photograph file.');
       return;
     }
 
     setUploadError(null);
+    setUploadNotice(null);
     setUploadSuccess(false);
     setSelectedFileName(file.name);
 
@@ -229,6 +260,9 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
       const res = await uploadPortfolioImage(file);
       setFormImage(res.url);
       setUploadSuccess(true);
+      if (res.browserNotice) {
+        setUploadNotice(res.browserNotice);
+      }
       setIsUploading(false);
     } catch (err: any) {
       setIsUploading(false);
@@ -496,7 +530,7 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/jpg"
+                  accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/avif,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif,.avif,.heic,.heif"
                   className="hidden"
                   onChange={handleFileSelect}
                 />
@@ -591,10 +625,23 @@ export const AdminPortfolio: React.FC<AdminPortfolioProps> = ({
                           Select a photo from your device or drag & drop here
                         </p>
                         <p className="text-[9px] text-neutral-500 tracking-wider uppercase">
-                          JPG, PNG, WebP · Up to 15MB · Cloud Storage
+                          JPG, PNG, WebP, GIF, BMP, TIFF, AVIF, HEIC · Up to 15MB · Cloud Storage
                         </p>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {uploadNotice && (
+                  <div className="p-2.5 bg-amber-950/40 border border-amber-800/60 text-amber-200 text-[11px] flex items-center justify-between gap-2">
+                    <span>{uploadNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setUploadNotice(null)}
+                      className="text-amber-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 )}
 

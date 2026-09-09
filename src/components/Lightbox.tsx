@@ -14,6 +14,7 @@ import {
   Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { cinematicEase } from '../lib/motion';
 
 interface LightboxProps {
   items: PortfolioItem[];
@@ -137,7 +138,7 @@ export const Lightbox: React.FC<LightboxProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
+        transition={{ duration: 0.35, ease: cinematicEase }}
         className="fixed inset-0 z-50 bg-[#060606]/98 backdrop-blur-md flex flex-col justify-between select-none"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -190,7 +191,7 @@ export const Lightbox: React.FC<LightboxProps> = ({
         </div>
 
         {/* Main image stage */}
-        <div className="relative flex-1 w-full flex items-center justify-center p-4 md:p-8 overflow-hidden">
+        <div className="relative flex-1 w-full flex items-center justify-center p-2 sm:p-4 md:p-8 overflow-hidden">
           {/* Previous navigation button */}
           {total > 1 && (
             <button
@@ -199,9 +200,9 @@ export const Lightbox: React.FC<LightboxProps> = ({
                 handlePrev();
               }}
               aria-label="Previous photograph"
-              className="absolute left-4 md:left-8 top-1/2 -translate-y-1/2 p-3 text-neutral-400 hover:text-white bg-black/40 hover:bg-neutral-900/90 border border-neutral-800/80 transition-all z-20"
+              className="absolute left-2 sm:left-4 md:left-8 top-1/2 -translate-y-1/2 p-2 sm:p-3 text-neutral-400 hover:text-white bg-black/60 sm:bg-black/40 hover:bg-neutral-900/90 border border-neutral-800/80 transition-all z-20 rounded-full sm:rounded-none min-h-[44px] min-w-[44px] flex items-center justify-center backdrop-blur-sm"
             >
-              <ChevronLeft className="w-6 h-6" />
+              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           )}
 
@@ -213,9 +214,9 @@ export const Lightbox: React.FC<LightboxProps> = ({
                 handleNext();
               }}
               aria-label="Next photograph"
-              className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 p-3 text-neutral-400 hover:text-white bg-black/40 hover:bg-neutral-900/90 border border-neutral-800/80 transition-all z-20"
+              className="absolute right-2 sm:right-4 md:right-8 top-1/2 -translate-y-1/2 p-2 sm:p-3 text-neutral-400 hover:text-white bg-black/60 sm:bg-black/40 hover:bg-neutral-900/90 border border-neutral-800/80 transition-all z-20 rounded-full sm:rounded-none min-h-[44px] min-w-[44px] flex items-center justify-center backdrop-blur-sm"
             >
-              <ChevronRight className="w-6 h-6" />
+              <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           )}
 
@@ -223,13 +224,13 @@ export const Lightbox: React.FC<LightboxProps> = ({
           <div className="relative max-w-full max-h-full flex items-center justify-center">
             <motion.img
               key={currentItem.id}
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.25, ease: 'easeOut' }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: cinematicEase }}
               src={currentItem.image}
               alt={currentItem.alt || currentItem.title}
-              className="max-h-[75vh] md:max-h-[82vh] max-w-[92vw] md:max-w-[85vw] object-contain shadow-2xl"
+              className="max-h-[70vh] sm:max-h-[75vh] md:max-h-[82vh] max-w-[94vw] md:max-w-[85vw] object-contain shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />
           </div>
@@ -242,8 +243,8 @@ export const Lightbox: React.FC<LightboxProps> = ({
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 15 }}
-              transition={{ duration: 0.2 }}
-              className="w-full px-6 py-4 border-t border-neutral-900 bg-[#060606]/90 backdrop-blur-md z-20"
+              transition={{ duration: 0.3, ease: cinematicEase }}
+              className="w-full px-5 sm:px-6 py-3 sm:py-4 border-t border-neutral-900 bg-[#060606]/95 backdrop-blur-md z-20 max-h-[36vh] overflow-y-auto pb-[max(0.75rem,env(safe-area-inset-bottom,0.75rem))]"
             >
               <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1 max-w-xl">

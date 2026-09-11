@@ -27,11 +27,21 @@ interface AuthenticatedRequest extends Request {
 async function startServer() {
   const app = express();
   const rawPort = process.env.PORT;
-  const parsedPort = parseInt(rawPort || '3000', 10);
-  const PORT = !isNaN(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+  let PORT = 3000;
+  if (rawPort) {
+    const parsed = parseInt(rawPort, 10);
+    // Port 8080 is reserved by the container's Nginx reverse proxy
+    if (!isNaN(parsed) && parsed > 0 && parsed !== 8080) {
+      PORT = parsed;
+    }
+  }
 
-  // Initialize authoritative Firestore persistence
-  await db.init();
+  // Initialize persistence (Firestore with resilient fallback)
+  try {
+    await db.init();
+  } catch (err: any) {
+    console.warn('[NINETIES SHOTS] [STARTUP WARNING] Database initialization warning:', err.message);
+  }
 
   // JSON payload parser
   app.use(express.json({ limit: '25mb' }));

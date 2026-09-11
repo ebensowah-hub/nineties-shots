@@ -16,13 +16,14 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface ContactViewProps {
   preselectedService?: string;
 }
 
 export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   const mapServiceToShootType = (service?: string): string => {
     if (!service) return 'Portraits';
     const s = service.toLowerCase();
@@ -138,10 +139,10 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16">
         {/* Left Column: Direct Info & WhatsApp CTA */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.8, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
           className="lg:col-span-5 space-y-8"
         >
           <div className="space-y-4">
@@ -227,10 +228,10 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
 
         {/* Right Column: Inquiry Booking Form */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.8, delay: 0.1, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.1, ease: cinematicEase }}
           className="lg:col-span-7"
         >
           <div className="p-8 md:p-10 bg-neutral-950 border border-neutral-800">
@@ -239,10 +240,10 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
               /* Submission Success State */
               <motion.div
                 key="success"
-                initial={{ opacity: 0, y: 12 }}
+                initial={{ opacity: 0, y: reduceMotion ? 0 : 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.4, ease: cinematicEase }}
+                exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }}
+                transition={{ duration: reduceMotion ? 0 : 0.4, ease: cinematicEase }}
                 className="py-8 text-center space-y-6"
               >
                 <div className="w-14 h-14 rounded-full bg-neutral-900 border border-neutral-700 flex items-center justify-center mx-auto text-white">
@@ -320,10 +321,10 @@ export const ContactView: React.FC<ContactViewProps> = ({ preselectedService }) 
               /* Active Form */
               <motion.form
                 key="form"
-                initial={{ opacity: 0, y: 12 }}
+                initial={{ opacity: 0, y: reduceMotion ? 0 : 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.4, ease: cinematicEase }}
+                exit={{ opacity: 0, y: reduceMotion ? 0 : -12 }}
+                transition={{ duration: reduceMotion ? 0 : 0.4, ease: cinematicEase }}
                 onSubmit={handleSubmit}
                 className="space-y-6"
               >

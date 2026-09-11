@@ -5,13 +5,15 @@ import { SectionHeading } from './SectionHeading';
 import { ImageWithFallback } from './ImageWithFallback';
 import { Quote, Eye, Flame, ShieldCheck, Compass } from 'lucide-react';
 import { motion } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface AboutViewProps {
   onBookShoot?: () => void;
 }
 
 export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
+
   const getPillarIcon = (index: number) => {
     switch (index) {
       case 0: return <Eye className="w-5 h-5 text-neutral-400" />;
@@ -32,10 +34,10 @@ export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
 
       {/* Hero Manifesto Quote */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: '-40px' }}
-        transition={{ duration: 0.8, ease: cinematicEase }}
+        transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
         className="mb-20 md:mb-28 max-w-4xl"
       >
         <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 mb-4 block">
@@ -53,10 +55,10 @@ export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-start mb-28">
         {/* Story Text Column */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.8, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
           className="lg:col-span-7 space-y-8 text-neutral-300 font-light text-base md:text-lg leading-relaxed"
         >
           <div className="p-8 border border-neutral-800 bg-neutral-950/60 relative">
@@ -93,10 +95,10 @@ export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
 
         {/* Photographer Portrait Frame */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.8, delay: 0.15, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.15, ease: cinematicEase }}
           className="lg:col-span-5 space-y-4"
         >
           <div className="relative group border border-neutral-800/80 bg-neutral-950 p-3">
@@ -131,10 +133,10 @@ export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
           {aboutData.creativePhilosophy.map((pillar, idx) => (
             <motion.div
               key={pillar.title}
-              initial={{ opacity: 0, y: 16 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: '-40px' }}
-              transition={{ duration: 0.6, delay: idx * 0.1, ease: cinematicEase }}
+              transition={{ duration: reduceMotion ? 0 : 0.6, delay: reduceMotion ? 0 : idx * 0.1, ease: cinematicEase }}
               className="p-6 md:p-8 bg-neutral-950/80 border border-neutral-800/80 flex flex-col justify-between hover:border-neutral-600 transition-colors"
             >
               <div>
@@ -160,10 +162,10 @@ export const AboutView: React.FC<AboutViewProps> = ({ onBookShoot }) => {
       {/* About CTA */}
       {onBookShoot && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.7, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
           className="p-8 md:p-12 border border-neutral-800 bg-neutral-950 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left"
         >
           <div>

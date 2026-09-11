@@ -21,9 +21,10 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminLayout } from './components/admin/AdminLayout';
 import { checkAdminAuthSession, getPublicData, trackEvent } from './lib/api';
 import { AnimatePresence, motion } from 'motion/react';
-import { sceneVariants } from './lib/motion';
+import { useCinematicMotion } from './lib/motion';
 
 export default function App() {
+  const { sceneVariants } = useCinematicMotion();
   const [activePage, setActivePage] = useState<ActivePage>('home');
   const [portfolioCategory, setPortfolioCategory] = useState<CategorySlug>('all');
   const [preselectedService, setPreselectedService] = useState<string | undefined>(undefined);

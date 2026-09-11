@@ -5,7 +5,7 @@ import { PortfolioCard } from './PortfolioCard';
 import { SectionHeading } from './SectionHeading';
 import { LayoutGrid, Grid3X3, SlidersHorizontal, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface PortfolioViewProps {
   items: PortfolioItem[];
@@ -20,6 +20,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
   onOpenLightbox,
   onBookShoot
 }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   const [selectedCategory, setSelectedCategory] = useState<CategorySlug>(initialCategory);
   const [layoutMode, setLayoutMode] = useState<'editorial' | 'grid'>('editorial');
   const [searchQuery, setSearchQuery] = useState('');
@@ -143,18 +144,18 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       ) : layoutMode === 'grid' ? (
         /* Uniform Grid */
         <motion.div
-          layout
+          layout={!reduceMotion}
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8"
         >
           <AnimatePresence>
             {filteredItems.map(item => (
               <motion.div
                 key={item.id}
-                layout
-                initial={{ opacity: 0, y: 14 }}
+                layout={!reduceMotion}
+                initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.4, ease: cinematicEase }}
+                transition={{ duration: reduceMotion ? 0 : 0.4, ease: cinematicEase }}
               >
                 <PortfolioCard
                   item={item}
@@ -168,7 +169,7 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       ) : (
         /* Editorial Staggered Layout */
         <motion.div
-          layout
+          layout={!reduceMotion}
           className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-10 items-start"
         >
           <AnimatePresence>
@@ -197,11 +198,11 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
               return (
                 <motion.div
                   key={item.id}
-                  layout
-                  initial={{ opacity: 0, y: 16 }}
+                  layout={!reduceMotion}
+                  initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.45, delay: Math.min(index * 0.03, 0.2), ease: cinematicEase }}
+                  transition={{ duration: reduceMotion ? 0 : 0.45, delay: reduceMotion ? 0 : Math.min(index * 0.03, 0.2), ease: cinematicEase }}
                   className={colSpan}
                 >
                   <PortfolioCard
@@ -219,10 +220,10 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
       {/* Editorial Conversion / Commission Callout */}
       {onBookShoot && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.7, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
           className="mt-16 sm:mt-24 p-6 sm:p-10 md:p-12 border border-neutral-800 bg-neutral-950 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left"
         >
           <div className="space-y-1 max-w-xl">

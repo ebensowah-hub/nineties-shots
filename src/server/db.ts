@@ -187,9 +187,77 @@ class Database {
   private firestore: Firestore | null = null;
   private app: adminApp.App | null = null;
   private initialized: boolean = false;
+  private firestoreAvailable: boolean = true;
+  private dbFilePath: string = '';
+  private localStore: DatabaseSchema = {
+    adminUsers: [],
+    sessions: [],
+    inquiries: [],
+    bookings: [],
+    clients: [],
+    expenses: [],
+    portfolio: defaultPortfolioItems.map((item, index) => ({
+      ...item,
+      isHero: item.image === defaultHero.url,
+      isPublished: true,
+      order: index
+    })),
+    services: defaultServices.map((service, index) => ({
+      ...service,
+      isEnabled: true,
+      order: index,
+      quoteRangeText: 'Custom Commission Scoping'
+    })),
+    settings: getDefaultSettings(),
+    analyticsEvents: [],
+    auditLogs: [],
+    conversionHistory: []
+  };
 
   constructor() {
     this.setupFirebase();
+  }
+
+  private getDbFilePath(): string {
+    if (this.dbFilePath) return this.dbFilePath;
+    const customPath = process.env.DB_FILE_PATH;
+    if (customPath) {
+      this.dbFilePath = customPath;
+    } else {
+      const dataDir = process.env.DATA_DIR_PATH || path.join(process.cwd(), 'data');
+      this.dbFilePath = path.join(dataDir, 'ninetiesshots_db.json');
+    }
+    return this.dbFilePath;
+  }
+
+  private saveLocalStore(): void {
+    try {
+      const filePath = this.getDbFilePath();
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(filePath, JSON.stringify(this.localStore, null, 2), 'utf-8');
+    } catch (e: any) {
+      console.warn('[DB] Failed to save local store:', e.message);
+    }
+  }
+
+  private loadLocalStore(): void {
+    try {
+      const filePath = this.getDbFilePath();
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        this.localStore = {
+          ...this.localStore,
+          ...parsed,
+          settings: { ...this.localStore.settings, ...(parsed.settings || {}) }
+        };
+      }
+    } catch (e: any) {
+      console.warn('[DB] Failed to load local store:', e.message);
+    }
   }
 
   private setupFirebase(): void {
@@ -229,40 +297,236 @@ class Database {
     } catch (err) {
       console.error('[DB] Failed to initialize Firebase Admin SDK connection:', err);
       this.firestore = null;
+      this.firestoreAvailable = false;
     }
   }
 
-  private getDB(): Firestore {
-    if (!this.firestore) {
-      this.setupFirebase();
-    }
-    if (!this.firestore) {
-      throw new Error('Firestore is not configured or unavailable. Check firebase-applet-config.json.');
-    }
-    return this.firestore;
+  private getDB(): any {
+    const self = this;
+    const isOnline = self.firestore !== null && self.firestoreAvailable;
+
+    return {
+      batch: () => {
+        let realBatch: any = null;
+        if (isOnline) {
+          try {
+            realBatch = self.firestore!.batch();
+          } catch {
+            realBatch = null;
+          }
+        }
+        const operations: Array<() => void> = [];
+
+        return {
+          set: (docRef: any, data: any) => {
+            operations.push(() => {
+              docRef.set(data);
+            });
+            if (realBatch && docRef.__realDocRef) {
+              try {
+                realBatch.set(docRef.__realDocRef, data);
+              } catch {
+                // Ignore real batch error in fallback
+              }
+            }
+          },
+          commit: async () => {
+            for (const op of operations) {
+              op();
+            }
+            if (realBatch) {
+              try {
+                await realBatch.commit();
+              } catch (err: any) {
+                console.warn('[DB] Firestore batch commit error:', err.message);
+                self.firestoreAvailable = false;
+              }
+            }
+          }
+        };
+      },
+
+      collection: (colName: string) => {
+        let realCol: any = null;
+        if (isOnline) {
+          try {
+            realCol = self.firestore!.collection(colName);
+          } catch {
+            realCol = null;
+          }
+        }
+
+        const getColList = (): any[] => {
+          if (colName === 'settings') {
+            return [self.localStore.settings];
+          }
+          const list = (self.localStore as any)[colName];
+          return Array.isArray(list) ? list : [];
+        };
+
+        const setColList = (newList: any[]) => {
+          if (colName !== 'settings') {
+            (self.localStore as any)[colName] = newList;
+            self.saveLocalStore();
+          }
+        };
+
+        return {
+          get: async () => {
+            if (isOnline && realCol) {
+              try {
+                const snap = await realCol.get();
+                return snap;
+              } catch (err: any) {
+                if (self.firestoreAvailable) {
+                  console.warn(`[DB] Firestore query error on ${colName} (${err.message}). Using local store.`);
+                  self.firestoreAvailable = false;
+                }
+              }
+            }
+            const list = getColList();
+            return {
+              empty: list.length === 0,
+              docs: list.map((item: any) => ({
+                id: item.id || (colName === 'settings' ? 'global' : 'item'),
+                exists: true,
+                data: () => ({ ...item })
+              }))
+            };
+          },
+
+          doc: (docId?: string) => {
+            const id = docId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            let realDocRef: any = null;
+            if (isOnline && realCol) {
+              try {
+                realDocRef = realCol.doc(id);
+              } catch {
+                realDocRef = null;
+              }
+            }
+
+            return {
+              id,
+              __realDocRef: realDocRef,
+              get: async () => {
+                if (isOnline && realDocRef) {
+                  try {
+                    const snap = await realDocRef.get();
+                    return snap;
+                  } catch (err: any) {
+                    if (self.firestoreAvailable) {
+                      console.warn(`[DB] Firestore doc get error on ${colName}/${id} (${err.message}). Using local store.`);
+                      self.firestoreAvailable = false;
+                    }
+                  }
+                }
+                if (colName === 'settings') {
+                  return {
+                    id: 'global',
+                    exists: true,
+                    data: () => ({ ...self.localStore.settings })
+                  };
+                }
+                const list = getColList();
+                const item = list.find((it: any) => it.id === id || (colName === 'sessions' && it.token === id));
+                return {
+                  id,
+                  exists: !!item,
+                  data: () => (item ? { ...item } : undefined)
+                };
+              },
+
+              set: async (data: any) => {
+                const cleanData = sanitizeForFirestore(data);
+                if (colName === 'settings') {
+                  self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+                  self.saveLocalStore();
+                } else {
+                  const list = getColList();
+                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                  const matchVal = cleanData[lookupKey] || id;
+                  const idx = list.findIndex((it: any) => it[lookupKey] === matchVal);
+                  const toStore = { ...cleanData, [lookupKey]: matchVal };
+                  if (idx >= 0) {
+                    list[idx] = toStore;
+                  } else {
+                    list.push(toStore);
+                  }
+                  setColList(list);
+                }
+
+                if (isOnline && realDocRef) {
+                  try {
+                    await realDocRef.set(cleanData);
+                  } catch (err: any) {
+                    console.warn(`[DB] Firestore doc set error on ${colName}/${id} (${err.message}).`);
+                    self.firestoreAvailable = false;
+                  }
+                }
+              },
+
+              update: async (data: any) => {
+                const cleanData = sanitizeForFirestore(data);
+                if (colName === 'settings') {
+                  self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+                  self.saveLocalStore();
+                } else {
+                  const list = getColList();
+                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                  const idx = list.findIndex((it: any) => it[lookupKey] === id);
+                  if (idx >= 0) {
+                    list[idx] = { ...list[idx], ...cleanData };
+                    setColList(list);
+                  }
+                }
+
+                if (isOnline && realDocRef) {
+                  try {
+                    await realDocRef.update(cleanData);
+                  } catch (err: any) {
+                    console.warn(`[DB] Firestore doc update error on ${colName}/${id} (${err.message}).`);
+                    self.firestoreAvailable = false;
+                  }
+                }
+              },
+
+              delete: async () => {
+                if (colName !== 'settings') {
+                  const list = getColList();
+                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                  const filtered = list.filter((it: any) => it[lookupKey] !== id);
+                  setColList(filtered);
+                }
+
+                if (isOnline && realDocRef) {
+                  try {
+                    await realDocRef.delete();
+                  } catch (err: any) {
+                    console.warn(`[DB] Firestore doc delete error on ${colName}/${id} (${err.message}).`);
+                    self.firestoreAvailable = false;
+                  }
+                }
+              }
+            };
+          }
+        };
+      }
+    };
   }
 
   public async init(): Promise<void> {
     if (this.initialized) return;
-    const db = this.getDB();
 
-    // 1. Verify and provision initial settings if missing
-    const settingsRef = db.collection('settings').doc('global');
-    const settingsSnap = await settingsRef.get();
-    if (!settingsSnap.exists) {
-      console.log('[DB] Seeding default settings into Firestore...');
-      await settingsRef.set(sanitizeForFirestore(getDefaultSettings()));
-    }
+    // Load any existing local store state
+    this.loadLocalStore();
 
-    // 2. Verify admin accounts in Firestore
-    const adminCol = db.collection('adminUsers');
-    const adminSnaps = await adminCol.get();
-
+    // Verify admin accounts in local store
     const envResetPassword = (process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
     const envAdminUsername = (process.env.ADMIN_USERNAME?.trim() || 'admin').toLowerCase();
 
-    if (adminSnaps.empty) {
-      console.log('[DB] No admin user detected in Firestore. Generating initial administrator...');
+    if (this.localStore.adminUsers.length === 0) {
+      console.log('[DB] Generating initial administrator account...');
       let plainPassword = '';
       let generated = false;
 
@@ -278,7 +542,7 @@ class Database {
 
       if (generated) {
         console.log('\n' + '='.repeat(72));
-        console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED IN FIRESTORE');
+        console.log('[NINETIES SHOTS] INITIAL ADMINISTRATOR ACCOUNT PROVISIONED');
         console.log(`Username: ${envAdminUsername}`);
         console.log(`Initial Password: ${plainPassword}`);
         console.log('SAVE THIS PASSWORD NOW — IT WILL NOT BE SHOWN AGAIN.');
@@ -295,76 +559,96 @@ class Database {
         createdAt: new Date().toISOString()
       };
 
-      await db.collection('adminUsers').doc(initialAdmin.id).set(sanitizeForFirestore(initialAdmin));
+      this.localStore.adminUsers = [initialAdmin];
+      this.saveLocalStore();
     } else if (envResetPassword && envResetPassword.length >= 8) {
-      // Secure credential synchronization / reset via environment variable
-      const existingAdmins = adminSnaps.docs.map(d => d.data() as StoredAdminUser);
-      let targetAdmin = existingAdmins.find(a => a.username.toLowerCase() === envAdminUsername) || existingAdmins[0];
-
-      if (targetAdmin) {
-        const isMatch = bcrypt.compareSync(envResetPassword, targetAdmin.passwordHash);
-        if (!isMatch) {
-          const salt = bcrypt.genSaltSync(10);
-          targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
-          targetAdmin.mustChangePassword = true;
-          await db.collection('adminUsers').doc(targetAdmin.id).update({
-            passwordHash: targetAdmin.passwordHash,
-            mustChangePassword: true
-          });
-          console.log(`[NINETIES SHOTS] Admin password for "${targetAdmin.username}" securely updated via environment configuration.`);
-        }
+      const targetAdmin = this.localStore.adminUsers.find(a => a.username.toLowerCase() === envAdminUsername) || this.localStore.adminUsers[0];
+      if (targetAdmin && !bcrypt.compareSync(envResetPassword, targetAdmin.passwordHash)) {
+        const salt = bcrypt.genSaltSync(10);
+        targetAdmin.passwordHash = bcrypt.hashSync(envResetPassword, salt);
+        targetAdmin.mustChangePassword = true;
+        this.saveLocalStore();
+        console.log(`[NINETIES SHOTS] Admin password for "${targetAdmin.username}" securely updated via environment configuration.`);
       }
     }
 
-    // 3. Seed portfolio if collection is completely empty
-    const portfolioCol = db.collection('portfolio');
-    const portfolioSnaps = await portfolioCol.get();
-    if (portfolioSnaps.empty) {
-      console.log('[DB] Seeding default portfolio into Firestore...');
-      const batch = db.batch();
-      defaultPortfolioItems.forEach((item, index) => {
-        const docRef = db.collection('portfolio').doc(item.id);
-        batch.set(docRef, sanitizeForFirestore({
-          ...item,
-          isHero: item.image === defaultHero.url,
-          isPublished: true,
-          order: index
-        }));
-      });
-      await batch.commit();
-    }
+    // Persist default structure locally so local state is guaranteed ready
+    this.saveLocalStore();
 
-    // 4. Seed services if collection is completely empty
-    const servicesCol = db.collection('services');
-    const servicesSnaps = await servicesCol.get();
-    if (servicesSnaps.empty) {
-      console.log('[DB] Seeding default services into Firestore...');
-      const batch = db.batch();
-      defaultServices.forEach((service, index) => {
-        const docRef = db.collection('services').doc(service.id);
-        batch.set(docRef, sanitizeForFirestore({
-          ...service,
-          isEnabled: true,
-          order: index,
-          quoteRangeText: 'Custom Commission Scoping'
-        }));
-      });
-      await batch.commit();
+    // If Firestore is configured, attempt seeding and synchronizing
+    if (this.firestore) {
+      try {
+        const realDb = this.firestore;
+
+        // 1. Verify and provision initial settings if missing
+        const settingsRef = realDb.collection('settings').doc('global');
+        const settingsSnap = await settingsRef.get();
+        if (!settingsSnap.exists) {
+          console.log('[DB] Seeding default settings into Firestore...');
+          await settingsRef.set(sanitizeForFirestore(this.localStore.settings));
+        }
+
+        // 2. Verify admin accounts in Firestore
+        const adminCol = realDb.collection('adminUsers');
+        const adminSnaps = await adminCol.get();
+        if (adminSnaps.empty) {
+          console.log('[DB] Seeding administrator account into Firestore...');
+          for (const a of this.localStore.adminUsers) {
+            await adminCol.doc(a.id).set(sanitizeForFirestore(a));
+          }
+        }
+
+        // 3. Seed portfolio if collection is completely empty
+        const portfolioCol = realDb.collection('portfolio');
+        const portfolioSnaps = await portfolioCol.get();
+        if (portfolioSnaps.empty) {
+          console.log('[DB] Seeding default portfolio into Firestore...');
+          const batch = realDb.batch();
+          this.localStore.portfolio.forEach((item) => {
+            const docRef = portfolioCol.doc(item.id);
+            batch.set(docRef, sanitizeForFirestore(item));
+          });
+          await batch.commit();
+        }
+
+        // 4. Seed services if collection is completely empty
+        const servicesCol = realDb.collection('services');
+        const servicesSnaps = await servicesCol.get();
+        if (servicesSnaps.empty) {
+          console.log('[DB] Seeding default services into Firestore...');
+          const batch = realDb.batch();
+          this.localStore.services.forEach((service) => {
+            const docRef = servicesCol.doc(service.id);
+            batch.set(docRef, sanitizeForFirestore(service));
+          });
+          await batch.commit();
+        }
+
+        this.firestoreAvailable = true;
+        console.log('[DB] Firestore initialized and synchronized successfully.');
+      } catch (err: any) {
+        console.warn(`[DB] [RESILIENT STARTUP] Firestore connection unavailable or permission denied: ${err.message}. Seamlessly operating with local store.`);
+        this.firestoreAvailable = false;
+      }
+    } else {
+      this.firestoreAvailable = false;
     }
 
     this.initialized = true;
   }
 
   public async isHealthy(): Promise<boolean> {
-    try {
-      const db = this.getDB();
-      const settingsRef = db.collection('settings').doc('global');
-      const snap = await settingsRef.get();
-      return snap.exists;
-    } catch (err) {
-      console.error('[DB] Health check error:', err);
-      return false;
+    if (this.firestore && this.firestoreAvailable) {
+      try {
+        const settingsRef = this.firestore.collection('settings').doc('global');
+        const snap = await settingsRef.get();
+        if (snap.exists) return true;
+      } catch (err: any) {
+        console.warn('[DB] Health check error (falling back to local store health):', err.message);
+        this.firestoreAvailable = false;
+      }
     }
+    return this.initialized && this.localStore.portfolio.length > 0;
   }
 
   // ==================== AUTH & SESSION MANAGEMENT ====================

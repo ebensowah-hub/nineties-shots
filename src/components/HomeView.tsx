@@ -10,7 +10,7 @@ import { PortfolioCard } from './PortfolioCard';
 import { ImageWithFallback } from './ImageWithFallback';
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface HomeViewProps {
   portfolioItems: PortfolioItem[];
@@ -25,6 +25,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onNavigate,
   onRequestQuote
 }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   const [activeSpotlightCat, setActiveSpotlightCat] = useState<CategorySlug>('portraits');
 
   const spotlightItems = portfolioItems
@@ -59,28 +60,28 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <section className="py-24 md:py-32 bg-[#060606] border-y border-neutral-900/80 px-6 md:px-10">
         <div className="max-w-5xl mx-auto space-y-8 text-left">
           <motion.span
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 12 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-40px' }}
-            transition={{ duration: 0.7, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
             className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block"
           >
             THE MANIFESTO // NINETIES SHOTS
           </motion.span>
           <motion.h2
-            initial={{ opacity: 0, y: 24 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 24 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-40px' }}
-            transition={{ duration: 0.85, delay: 0.1, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.85, delay: reduceMotion ? 0 : 0.1, ease: cinematicEase }}
             className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-heading font-light text-white tracking-tight uppercase leading-[1.05]"
           >
             &ldquo;WE DO NOT JUST CAPTURE WHAT IT LOOKED LIKE. WE CAPTURE THE WAY IT FELT.&rdquo;
           </motion.h2>
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-40px' }}
-            transition={{ duration: 0.8, delay: 0.25, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.25, ease: cinematicEase }}
             className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 text-neutral-400 font-light text-base md:text-lg leading-relaxed"
           >
             <p>
@@ -97,10 +98,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <section className="py-24 md:py-32 px-6 md:px-10 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
           <motion.div
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ duration: 0.7, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
           >
             <span className="text-[11px] font-mono tracking-[0.25em] text-neutral-500 uppercase block mb-2">
               CURATED SPOTLIGHT
@@ -136,10 +137,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <AnimatePresence mode="wait">
           <motion.div
             key={activeSpotlightCat}
-            initial={{ opacity: 0, y: 14 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 14 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.35, ease: cinematicEase }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : -10 }}
+            transition={{ duration: reduceMotion ? 0 : 0.35, ease: cinematicEase }}
             className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8"
           >
             {spotlightItems.map(item => (
@@ -169,10 +170,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
           {/* Portrait frame */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-40px' }}
-            transition={{ duration: 0.8, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
             className="lg:col-span-5 order-2 lg:order-1"
           >
             <div className="border border-neutral-800 bg-neutral-950 p-3">
@@ -190,10 +191,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
           {/* Philosophy text */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: '-40px' }}
-            transition={{ duration: 0.8, delay: 0.15, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.8, delay: reduceMotion ? 0 : 0.15, ease: cinematicEase }}
             className="lg:col-span-7 space-y-6 order-1 lg:order-2"
           >
             <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block">
@@ -225,10 +226,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <section className="py-24 md:py-32 px-6 md:px-10 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-16">
           <motion.div
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ duration: 0.7, ease: cinematicEase }}
+            transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
           >
             <span className="text-[11px] font-mono tracking-[0.25em] text-neutral-500 uppercase block mb-2">
               COMMISSIONS & SCOPES
@@ -250,10 +251,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
           {servicesData.slice(0, 3).map((service, index) => (
             <motion.div
               key={service.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: '-40px' }}
-              transition={{ duration: 0.65, delay: index * 0.12, ease: cinematicEase }}
+              transition={{ duration: reduceMotion ? 0 : 0.65, delay: reduceMotion ? 0 : index * 0.12, ease: cinematicEase }}
               className="p-8 bg-neutral-950 border border-neutral-800 flex flex-col justify-between hover:border-neutral-600 transition-colors group"
             >
               <div className="space-y-4">
@@ -286,10 +287,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* 7. Booking & Direct Commission CTA Banner */}
       <section className="py-24 md:py-32 bg-[#060606] border-t border-neutral-900 px-6 md:px-10">
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 24 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-40px' }}
-          transition={{ duration: 0.8, ease: cinematicEase }}
+          transition={{ duration: reduceMotion ? 0 : 0.8, ease: cinematicEase }}
           className="max-w-5xl mx-auto text-center space-y-8"
         >
           <span className="text-[11px] font-mono tracking-[0.3em] uppercase text-neutral-500 block">

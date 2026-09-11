@@ -14,7 +14,7 @@ import {
   Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cinematicEase } from '../lib/motion';
+import { useCinematicMotion } from '../lib/motion';
 
 interface LightboxProps {
   items: PortfolioItem[];
@@ -31,6 +31,7 @@ export const Lightbox: React.FC<LightboxProps> = ({
   onClose,
   onNavigate
 }) => {
+  const { reduceMotion, cinematicEase } = useCinematicMotion();
   const [showMetadata, setShowMetadata] = useState(true);
   const [copied, setCopied] = useState(false);
   const touchStartX = useRef<number | null>(null);
@@ -138,7 +139,7 @@ export const Lightbox: React.FC<LightboxProps> = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.35, ease: cinematicEase }}
+        transition={{ duration: reduceMotion ? 0 : 0.35, ease: cinematicEase }}
         className="fixed inset-0 z-50 bg-[#060606]/98 backdrop-blur-md flex flex-col justify-between select-none"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -227,7 +228,7 @@ export const Lightbox: React.FC<LightboxProps> = ({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.35, ease: cinematicEase }}
+              transition={{ duration: reduceMotion ? 0 : 0.35, ease: cinematicEase }}
               src={currentItem.image}
               alt={currentItem.alt || currentItem.title}
               className="max-h-[70vh] sm:max-h-[75vh] md:max-h-[82vh] max-w-[94vw] md:max-w-[85vw] object-contain shadow-2xl"
@@ -240,10 +241,10 @@ export const Lightbox: React.FC<LightboxProps> = ({
         <AnimatePresence>
           {showMetadata && (
             <motion.div
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 15 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 15 }}
-              transition={{ duration: 0.3, ease: cinematicEase }}
+              exit={{ opacity: 0, y: reduceMotion ? 0 : 15 }}
+              transition={{ duration: reduceMotion ? 0 : 0.3, ease: cinematicEase }}
               className="w-full px-5 sm:px-6 py-3 sm:py-4 border-t border-neutral-900 bg-[#060606]/95 backdrop-blur-md z-20 max-h-[36vh] overflow-y-auto pb-[max(0.75rem,env(safe-area-inset-bottom,0.75rem))]"
             >
               <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">

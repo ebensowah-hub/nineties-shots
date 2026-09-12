@@ -27,13 +27,25 @@ interface AuthenticatedRequest extends Request {
 async function startServer() {
   const app = express();
   const rawPort = process.env.PORT;
-  let PORT = 3000;
+  const nginxPort = process.env.NGINX_PORT ? parseInt(process.env.NGINX_PORT, 10) : null;
+  const isBehindNginxProxy = Boolean(nginxPort && (process.env.CONTROL_PLANE_PORT || process.env.DEFAULT_APP_PORT));
+  let PORT = 8080;
+
   if (rawPort) {
     const parsed = parseInt(rawPort, 10);
-    // Port 8080 is reserved by the container's Nginx reverse proxy
-    if (!isNaN(parsed) && parsed > 0 && parsed !== 8080) {
-      PORT = parsed;
+    if (!isNaN(parsed) && parsed > 0) {
+      if (isBehindNginxProxy && nginxPort && parsed === nginxPort) {
+        // When running behind the AI Studio Nginx reverse proxy (where Nginx binds to NGINX_PORT, typically 8080),
+        // Node cannot bind to the same port and must bind to the internal proxy target (typically 3000).
+        const defaultAppPort = process.env.DEFAULT_APP_PORT ? parseInt(process.env.DEFAULT_APP_PORT, 10) : 3000;
+        PORT = !isNaN(defaultAppPort) && defaultAppPort > 0 ? defaultAppPort : 3000;
+      } else {
+        // In standalone Cloud Run (or when not conflicting with Nginx), accept process.env.PORT exactly as provided (including 8080)
+        PORT = parsed;
+      }
     }
+  } else {
+    PORT = isBehindNginxProxy ? 3000 : 8080;
   }
 
   // Initialize persistence (Firestore with resilient fallback)

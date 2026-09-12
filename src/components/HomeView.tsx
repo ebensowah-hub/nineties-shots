@@ -112,7 +112,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </motion.div>
 
           {/* Quick discipline switchers */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+          <div className="flex items-center gap-6 overflow-x-auto pb-2 scrollbar-none">
             {(['portraits', 'lifestyle', 'photo-shoots'] as CategorySlug[]).map(cat => {
               const isActive = activeSpotlightCat === cat;
               const catObj = portfolioCategories.find(c => c.id === cat);
@@ -120,13 +120,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <button
                   key={cat}
                   onClick={() => setActiveSpotlightCat(cat)}
-                  className={`px-3.5 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors border relative ${
+                  className={`text-xs font-mono uppercase tracking-[0.22em] py-1 relative transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-white whitespace-nowrap ${
                     isActive
-                      ? 'bg-white text-black border-white font-semibold'
-                      : 'bg-neutral-950 text-neutral-400 border-neutral-800 hover:border-neutral-600 hover:text-white'
+                      ? 'text-white font-medium'
+                      : 'text-neutral-500 hover:text-neutral-300'
                   }`}
                 >
-                  {catObj?.name || cat}
+                  <span>{catObj?.name || cat}</span>
+                  {isActive && (
+                    <motion.div
+                      layoutId={reduceMotion ? undefined : "spotlightActiveIndicator"}
+                      className="absolute bottom-0 left-0 right-0 h-px bg-white"
+                      transition={{ duration: reduceMotion ? 0 : 0.25, ease: cinematicEase }}
+                    />
+                  )}
                 </button>
               );
             })}

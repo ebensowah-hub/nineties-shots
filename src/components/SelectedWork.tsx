@@ -120,16 +120,16 @@ export const SelectedWork: React.FC<SelectedWorkProps> = ({
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: '-40px' }}
         transition={{ duration: reduceMotion ? 0 : 0.7, ease: cinematicEase }}
-        className="mt-16 pt-8 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left"
+        className="mt-20 pt-10 border-t border-neutral-900 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left"
       >
-        <p className="text-sm font-mono text-neutral-400">
-          Showing 06 curated works from our active 2026 gallery.
+        <p className="text-xs font-mono text-neutral-500 uppercase tracking-widest">
+          Curated selection &bull; Studio archive 2026
         </p>
         <button
           onClick={() => onExploreAll('all')}
-          className="px-8 py-4 bg-neutral-900 border border-neutral-800 hover:border-neutral-500 hover:bg-neutral-800 text-xs uppercase font-bold tracking-[0.2em] text-white transition-all"
+          className="px-8 py-3.5 bg-transparent border border-neutral-600 hover:border-white text-xs uppercase tracking-[0.2em] text-white hover:bg-white hover:text-black transition-all duration-300"
         >
-          Explore All Categories & Works
+          View Complete Archive
         </button>
       </motion.div>
     </section>

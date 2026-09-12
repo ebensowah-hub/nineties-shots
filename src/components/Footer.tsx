@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivePage, CategorySlug } from '../types';
 import { siteConfig } from '../data/siteConfig';
+import { BrandLogo } from './BrandLogo';
 import { ArrowUp, ArrowUpRight, Lock } from 'lucide-react';
 
 interface FooterProps {
@@ -14,27 +15,27 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
   };
 
   const navLinks: { label: string; page: ActivePage }[] = [
-    { label: 'Selected Work', page: 'work' },
-    { label: 'Philosophy & About', page: 'about' },
-    { label: 'Commission Services', page: 'services' },
-    { label: 'Contact & Bookings', page: 'contact' }
+    { label: 'Work', page: 'work' },
+    { label: 'About', page: 'about' },
+    { label: 'Services', page: 'services' },
+    { label: 'Contact', page: 'contact' }
   ];
 
   return (
     <footer className="border-t border-neutral-900 bg-[#060606] text-neutral-400 pt-20 pb-12 px-6 md:px-10">
       <div className="max-w-7xl mx-auto space-y-16">
         {/* Upper Grid: Brand Statement & Navigations */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-12 items-start">
           {/* Brand Col */}
-          <div className="md:col-span-5 space-y-4">
-            <h3 className="text-xl md:text-2xl font-heading font-bold text-white uppercase tracking-[0.18em]">
-              {siteConfig.brandName}
-            </h3>
+          <div className="md:col-span-5 space-y-6">
+            <div className="flex items-center">
+              <BrandLogo size="lg" />
+            </div>
             <p className="text-sm text-neutral-400 font-light max-w-sm leading-relaxed">
               {siteConfig.manifesto.subheadline}
             </p>
-            <p className="text-xs font-mono text-neutral-500 pt-2">
-              {siteConfig.contact.location}
+            <p className="text-xs font-mono text-neutral-500">
+              {siteConfig.contact.location} &bull; Worldwide Commissions
             </p>
           </div>
 
@@ -51,7 +52,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
                       onNavigate(link.page);
                       scrollToTop();
                     }}
-                    className="text-xs uppercase tracking-wider text-neutral-300 hover:text-white transition-colors text-left py-1"
+                    className="text-xs uppercase tracking-[0.18em] text-neutral-300 hover:text-white transition-colors text-left py-1 outline-none focus-visible:ring-1 focus-visible:ring-white"
                   >
                     {link.label}
                   </button>
@@ -101,11 +102,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Large Typography Brand Marquee / Monolith */}
-        <div className="pt-8 border-t border-neutral-900/80 select-none">
-          <div className="text-4xl sm:text-6xl md:text-8xl lg:text-9xl font-heading font-black text-neutral-900 tracking-tighter uppercase leading-none overflow-hidden whitespace-nowrap">
-            NINETIES SHOTS
-          </div>
+        {/* Brand Statement / Monolith */}
+        <div className="pt-10 border-t border-neutral-900/80 select-none flex items-center justify-between">
+          <span className="text-xs sm:text-sm uppercase tracking-[0.3em] text-neutral-500 font-mono">
+            NINETIES SHOTS &bull; CINEMATIC & EDITORIAL PHOTOGRAPHY
+          </span>
+          <span className="text-xs font-mono text-neutral-600 hidden sm:inline">
+            EST. 2026
+          </span>
         </div>
 
         {/* Bottom Bar: Copyright, Owner Portal Login, and Back to Top */}

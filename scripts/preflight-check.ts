@@ -145,16 +145,52 @@ async function runPreflight() {
       logCheck('Production /api/public/config', 'FAIL', `HTTP ${configRes.status}`);
     }
 
-    // C. Root route (SPA frontend serving)
+    // C. Root route (SPA frontend serving) & Cache-Control verification
     const rootRes = await fetch(`http://127.0.0.1:${TEST_PORT}/`);
     const rootHtml = await rootRes.text();
+    const cacheControl = rootRes.headers.get('cache-control') || '';
     if (rootRes.status === 200 && rootHtml.includes('NINETIES SHOTS') && rootHtml.toLowerCase().includes('<!doctype html>')) {
-      logCheck('Production / (Root HTML)', 'PASS', `HTTP 200 OK (${rootHtml.length} bytes rendered)`);
+      if (cacheControl.includes('no-cache')) {
+        logCheck('Production / (Root HTML)', 'PASS', `HTTP 200 OK (${rootHtml.length} bytes, Cache-Control: ${cacheControl})`);
+      } else {
+        logCheck('Production / (Root HTML)', 'WARN', `HTTP 200 OK but missing no-cache header: ${cacheControl}`);
+      }
     } else {
       logCheck('Production / (Root HTML)', 'FAIL', `HTTP ${rootRes.status}: Missing title or doctype`);
     }
 
-    // D. API 404 Guard
+    // D. Application route SPA fallback (e.g. /portfolio, /admin)
+    const spaRes = await fetch(`http://127.0.0.1:${TEST_PORT}/portfolio`);
+    const spaHtml = await spaRes.text();
+    if (spaRes.status === 200 && spaHtml.includes('NINETIES SHOTS') && spaHtml.toLowerCase().includes('<!doctype html>')) {
+      logCheck('SPA Client Routing', 'PASS', 'Sub-routes (/portfolio) correctly return index.html for client routing');
+    } else {
+      logCheck('SPA Client Routing', 'FAIL', `Failed to route /portfolio: HTTP ${spaRes.status}`);
+    }
+
+    // E. Asset 404 Guard (missing JS chunks must NEVER return index.html with text/html)
+    const bogusAssetRes = await fetch(`http://127.0.0.1:${TEST_PORT}/assets/test-deliberately-missing-chunk.js`);
+    const bogusAssetType = bogusAssetRes.headers.get('content-type') || '';
+    if (bogusAssetRes.status === 404 && !bogusAssetType.includes('text/html')) {
+      logCheck('Asset 404 Guard', 'PASS', `Missing /assets/* returns genuine HTTP 404 (MIME: ${bogusAssetType})`);
+    } else {
+      logCheck('Asset 404 Guard', 'FAIL', `Missing asset returned HTTP ${bogusAssetRes.status} with ${bogusAssetType}`);
+    }
+
+    // F. Existing JS bundle MIME-Type check
+    const assetsInDist = fs.readdirSync(path.join(cwd, 'dist', 'assets')).filter(f => f.endsWith('.js'));
+    if (assetsInDist.length > 0) {
+      const realJsUrl = `http://127.0.0.1:${TEST_PORT}/assets/${assetsInDist[0]}`;
+      const realJsRes = await fetch(realJsUrl);
+      const realJsType = realJsRes.headers.get('content-type') || '';
+      if (realJsRes.status === 200 && realJsType.includes('application/javascript')) {
+        logCheck('JS Bundle MIME-Type', 'PASS', `Bundle ${assetsInDist[0]} returns HTTP 200 with ${realJsType}`);
+      } else {
+        logCheck('JS Bundle MIME-Type', 'FAIL', `Bundle returned HTTP ${realJsRes.status} with unexpected MIME: ${realJsType}`);
+      }
+    }
+
+    // G. API 404 Guard
     const bogusApiRes = await fetch(`http://127.0.0.1:${TEST_PORT}/api/nonexistent-route-guard-test`);
     const bogusApiJson: any = await bogusApiRes.json();
     if (bogusApiRes.status === 404 && bogusApiJson.error === 'API_ENDPOINT_NOT_FOUND') {
@@ -163,14 +199,14 @@ async function runPreflight() {
       logCheck('API 404 Guard', 'FAIL', `Unexpected response: HTTP ${bogusApiRes.status}`);
     }
 
-    // E. Dynamic PORT & 0.0.0.0 verification
+    // H. Dynamic PORT & 0.0.0.0 verification
     if (serverLogs.includes(`0.0.0.0:${TEST_PORT}`)) {
       logCheck('Host & Port Binding', 'PASS', `Bound strictly to 0.0.0.0:${TEST_PORT} from process.env.PORT`);
     } else {
       logCheck('Host & Port Binding', 'WARN', `Check server stdout for host/port confirmation`);
     }
 
-    // F. Secret exposure audit
+    // I. Secret exposure audit
     const sensitiveTokens = ['password', 'secret', 'jwt', 'hash', 'bearer'];
     let exposedSecrets = false;
     for (const token of sensitiveTokens) {

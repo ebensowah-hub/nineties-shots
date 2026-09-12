@@ -1200,9 +1200,34 @@ async function startServer() {
       console.warn(`[NINETIES SHOTS] [STARTUP WARNING] Production frontend build not found at: ${indexPath}`);
     }
 
-    app.use(express.static(distPath));
+    // Serve static files from dist directory with fine-grained caching
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        // Enforce no-cache on the entry point HTML to prevent stale bundle references
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else if (filePath.includes(path.sep + 'assets' + path.sep) || filePath.includes('/assets/')) {
+          // Content-hashed assets can be safely cached
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
+
+    // Asset 404 Protection:
+    // Any request to /assets/* that did not match a real file in dist/assets must return HTTP 404.
+    // They must NEVER fall through to index.html (preventing MIME type rejection: text/html instead of JS).
+    app.all('/assets/*', (req, res) => {
+      res.status(404).type('text/plain').send('Asset not found');
+    });
+
+    // SPA catch-all for all application routes (e.g. /, /portfolio, /contact, /admin)
     app.get('*', (req, res) => {
       if (fs.existsSync(indexPath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.sendFile(indexPath);
       } else {
         res.status(503).send('NINETIES SHOTS production build is initializing. Please refresh in a moment.');

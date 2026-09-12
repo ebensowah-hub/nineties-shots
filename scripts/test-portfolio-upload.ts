@@ -64,7 +64,7 @@ async function runTests() {
 
   // 2. Obtain valid admin session and handle mustChangePassword if set
   console.log('\n--- 2. Admin Authentication ---');
-  const adminPassword = process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD || 'PreflightAdminTest2026!';
+  const adminPassword = process.env.ADMIN_RESET_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD || 'AdminSecure2026!';
   const loginRes = await request({
     hostname: '127.0.0.1',
     port: PORT,
@@ -200,7 +200,8 @@ async function runTests() {
     'Admin can query /api/admin/portfolio/storage-status',
     storageStatusRes.status === 200 && typeof storageStatusRes.data?.available === 'boolean'
   );
-  console.log(`       Configured Bucket: ${storageStatusRes.data?.bucketName}`);
+  console.log(`       Cloud Storage Provider: ${storageStatusRes.data?.storageProvider || 'cloudinary'}`);
+  console.log(`       Cloud Name: ${storageStatusRes.data?.cloudName || 'nymr1jpy'}`);
   console.log(`       Storage Available: ${storageStatusRes.data?.available}`);
   if (storageStatusRes.data?.error) {
     console.log(`       Notice: ${storageStatusRes.data?.error}`);
@@ -245,30 +246,31 @@ async function runTests() {
   const countAfter = fs.existsSync(uploadsDir) ? fs.readdirSync(uploadsDir).length : 0;
 
   if (storageStatusRes.data?.available) {
-    // If Cloud Storage is available:
+    // If Cloudinary is available & configured:
     assert(
-      'Cloud Storage upload succeeds with durable URL',
-      uploadAttemptRes.status === 200 && uploadAttemptRes.data?.storageProvider === 'firebase_storage'
+      'Cloudinary upload succeeds with durable URL',
+      uploadAttemptRes.status === 200 && uploadAttemptRes.data?.storageProvider === 'cloudinary'
     );
     assert(
-      'Uploaded URL points to Cloud Storage / Firebase Storage',
-      uploadAttemptRes.data?.url?.includes('storage.googleapis.com') ||
-      uploadAttemptRes.data?.url?.includes('firebasestorage.googleapis.com')
+      'Uploaded URL points to secure Cloudinary HTTPS storage',
+      typeof uploadAttemptRes.data?.url === 'string' &&
+      uploadAttemptRes.data.url.startsWith('https://') &&
+      uploadAttemptRes.data.url.includes('cloudinary.com')
     );
   } else {
-    // When Cloud Storage is unavailable/not yet provisioned:
+    // When Cloudinary credentials are not configured in runtime environment:
     assert(
-      'Upload fails cleanly with descriptive error when Cloud Storage is unavailable',
-      uploadAttemptRes.status === 400 && String(uploadAttemptRes.data?.error).includes('Cloud media storage unavailable')
+      'Upload is rejected with 500 when Cloud storage is unconfigured',
+      uploadAttemptRes.status === 500
     );
     assert(
-      'NO files written to local ephemeral disk (zero silent fallback)',
-      countAfter === countBefore,
-      `Before: ${countBefore}, After: ${countAfter}`
+      'Error payload contains clear diagnostic message',
+      typeof uploadAttemptRes.data?.error === 'string' &&
+      uploadAttemptRes.data.error.includes('Cloud media storage unavailable')
     );
     assert(
-      'API does not report false success for ephemeral local storage',
-      uploadAttemptRes.data?.storageProvider !== 'local_fallback'
+      'Zero files written to local disk (no silent fallback)',
+      countAfter === countBefore
     );
   }
 

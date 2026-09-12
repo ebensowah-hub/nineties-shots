@@ -320,11 +320,41 @@ class Database {
         return {
           set: (docRef: any, data: any) => {
             operations.push(() => {
-              docRef.set(data);
+              if (docRef && typeof docRef.set === 'function') {
+                docRef.set(data);
+              }
             });
-            if (realBatch && docRef.__realDocRef) {
+            if (realBatch && docRef?.__realDocRef) {
               try {
                 realBatch.set(docRef.__realDocRef, data);
+              } catch {
+                // Ignore real batch error in fallback
+              }
+            }
+          },
+          update: (docRef: any, data: any) => {
+            operations.push(() => {
+              if (docRef && typeof docRef.update === 'function') {
+                docRef.update(data);
+              }
+            });
+            if (realBatch && docRef?.__realDocRef) {
+              try {
+                realBatch.update(docRef.__realDocRef, data);
+              } catch {
+                // Ignore real batch error in fallback
+              }
+            }
+          },
+          delete: (docRef: any) => {
+            operations.push(() => {
+              if (docRef && typeof docRef.delete === 'function') {
+                docRef.delete();
+              }
+            });
+            if (realBatch && docRef?.__realDocRef) {
+              try {
+                realBatch.delete(docRef.__realDocRef);
               } catch {
                 // Ignore real batch error in fallback
               }
@@ -371,6 +401,122 @@ class Database {
           }
         };
 
+        const createDocRef = (docId?: string) => {
+          const id = docId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          let realDocRef: any = null;
+          if (isOnline && realCol) {
+            try {
+              realDocRef = realCol.doc(id);
+            } catch {
+              realDocRef = null;
+            }
+          }
+
+          return {
+            id,
+            __realDocRef: realDocRef,
+            get: async () => {
+              if (isOnline && realDocRef) {
+                try {
+                  const snap = await realDocRef.get();
+                  return snap;
+                } catch (err: any) {
+                  if (self.firestoreAvailable) {
+                    console.warn(`[DB] Firestore doc get error on ${colName}/${id} (${err.message}). Using local store.`);
+                    self.firestoreAvailable = false;
+                  }
+                }
+              }
+              if (colName === 'settings') {
+                return {
+                  id: 'global',
+                  exists: true,
+                  data: () => ({ ...self.localStore.settings })
+                };
+              }
+              const list = getColList();
+              const item = list.find((it: any) => it.id === id || (colName === 'sessions' && it.token === id));
+              return {
+                id,
+                exists: !!item,
+                data: () => (item ? { ...item } : undefined)
+              };
+            },
+
+            set: async (data: any) => {
+              const cleanData = sanitizeForFirestore(data);
+              if (colName === 'settings') {
+                self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+                self.saveLocalStore();
+              } else {
+                const list = getColList();
+                const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                const matchVal = cleanData[lookupKey] || id;
+                const idx = list.findIndex((it: any) => it[lookupKey] === matchVal);
+                const toStore = { ...cleanData, [lookupKey]: matchVal };
+                if (idx >= 0) {
+                  list[idx] = toStore;
+                } else {
+                  list.push(toStore);
+                }
+                setColList(list);
+              }
+
+              if (isOnline && realDocRef) {
+                try {
+                  await realDocRef.set(cleanData);
+                } catch (err: any) {
+                  console.warn(`[DB] Firestore doc set error on ${colName}/${id} (${err.message}).`);
+                  self.firestoreAvailable = false;
+                }
+              }
+            },
+
+            update: async (data: any) => {
+              const cleanData = sanitizeForFirestore(data);
+              if (colName === 'settings') {
+                self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+                self.saveLocalStore();
+              } else {
+                const list = getColList();
+                const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                const idx = list.findIndex((it: any) => it[lookupKey] === id);
+                if (idx >= 0) {
+                  list[idx] = { ...list[idx], ...cleanData };
+                  setColList(list);
+                }
+              }
+
+              if (isOnline && realDocRef) {
+                try {
+                  await realDocRef.update(cleanData);
+                } catch (err: any) {
+                  console.warn(`[DB] Firestore doc update error on ${colName}/${id} (${err.message}).`);
+                  self.firestoreAvailable = false;
+                }
+              }
+            },
+
+            delete: async () => {
+              if (colName !== 'settings') {
+                const list = getColList();
+                const lookupKey = colName === 'sessions' ? 'token' : 'id';
+                const filtered = list.filter((it: any) => it[lookupKey] !== id);
+                setColList(filtered);
+              }
+
+              if (isOnline && realDocRef) {
+                try {
+                  await realDocRef.delete();
+                } catch (err: any) {
+                  console.warn(`[DB] Firestore doc delete error on ${colName}/${id} (${err.message}).`);
+                  self.firestoreAvailable = false;
+                }
+              }
+            }
+          };
+        };
+
         return {
           get: async () => {
             if (isOnline && realCol) {
@@ -387,129 +533,19 @@ class Database {
             const list = getColList();
             return {
               empty: list.length === 0,
-              docs: list.map((item: any) => ({
-                id: item.id || (colName === 'settings' ? 'global' : 'item'),
-                exists: true,
-                data: () => ({ ...item })
-              }))
+              docs: list.map((item: any) => {
+                const docId = item.id || (colName === 'sessions' ? item.token : undefined) || (colName === 'settings' ? 'global' : 'item');
+                return {
+                  id: docId,
+                  exists: true,
+                  data: () => ({ ...item }),
+                  ref: createDocRef(docId)
+                };
+              })
             };
           },
 
-          doc: (docId?: string) => {
-            const id = docId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-            let realDocRef: any = null;
-            if (isOnline && realCol) {
-              try {
-                realDocRef = realCol.doc(id);
-              } catch {
-                realDocRef = null;
-              }
-            }
-
-            return {
-              id,
-              __realDocRef: realDocRef,
-              get: async () => {
-                if (isOnline && realDocRef) {
-                  try {
-                    const snap = await realDocRef.get();
-                    return snap;
-                  } catch (err: any) {
-                    if (self.firestoreAvailable) {
-                      console.warn(`[DB] Firestore doc get error on ${colName}/${id} (${err.message}). Using local store.`);
-                      self.firestoreAvailable = false;
-                    }
-                  }
-                }
-                if (colName === 'settings') {
-                  return {
-                    id: 'global',
-                    exists: true,
-                    data: () => ({ ...self.localStore.settings })
-                  };
-                }
-                const list = getColList();
-                const item = list.find((it: any) => it.id === id || (colName === 'sessions' && it.token === id));
-                return {
-                  id,
-                  exists: !!item,
-                  data: () => (item ? { ...item } : undefined)
-                };
-              },
-
-              set: async (data: any) => {
-                const cleanData = sanitizeForFirestore(data);
-                if (colName === 'settings') {
-                  self.localStore.settings = { ...self.localStore.settings, ...cleanData };
-                  self.saveLocalStore();
-                } else {
-                  const list = getColList();
-                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                  const matchVal = cleanData[lookupKey] || id;
-                  const idx = list.findIndex((it: any) => it[lookupKey] === matchVal);
-                  const toStore = { ...cleanData, [lookupKey]: matchVal };
-                  if (idx >= 0) {
-                    list[idx] = toStore;
-                  } else {
-                    list.push(toStore);
-                  }
-                  setColList(list);
-                }
-
-                if (isOnline && realDocRef) {
-                  try {
-                    await realDocRef.set(cleanData);
-                  } catch (err: any) {
-                    console.warn(`[DB] Firestore doc set error on ${colName}/${id} (${err.message}).`);
-                    self.firestoreAvailable = false;
-                  }
-                }
-              },
-
-              update: async (data: any) => {
-                const cleanData = sanitizeForFirestore(data);
-                if (colName === 'settings') {
-                  self.localStore.settings = { ...self.localStore.settings, ...cleanData };
-                  self.saveLocalStore();
-                } else {
-                  const list = getColList();
-                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                  const idx = list.findIndex((it: any) => it[lookupKey] === id);
-                  if (idx >= 0) {
-                    list[idx] = { ...list[idx], ...cleanData };
-                    setColList(list);
-                  }
-                }
-
-                if (isOnline && realDocRef) {
-                  try {
-                    await realDocRef.update(cleanData);
-                  } catch (err: any) {
-                    console.warn(`[DB] Firestore doc update error on ${colName}/${id} (${err.message}).`);
-                    self.firestoreAvailable = false;
-                  }
-                }
-              },
-
-              delete: async () => {
-                if (colName !== 'settings') {
-                  const list = getColList();
-                  const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                  const filtered = list.filter((it: any) => it[lookupKey] !== id);
-                  setColList(filtered);
-                }
-
-                if (isOnline && realDocRef) {
-                  try {
-                    await realDocRef.delete();
-                  } catch (err: any) {
-                    console.warn(`[DB] Firestore doc delete error on ${colName}/${id} (${err.message}).`);
-                    self.firestoreAvailable = false;
-                  }
-                }
-              }
-            };
-          }
+          doc: (docId?: string) => createDocRef(docId)
         };
       }
     };

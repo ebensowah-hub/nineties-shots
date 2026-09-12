@@ -1,8 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import * as adminApp from 'firebase-admin/app';
-import * as adminStorage from 'firebase-admin/storage';
 
 export const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15MB
 
@@ -41,8 +39,9 @@ export interface UploadResult {
   filename: string;
   size: number;
   mimeType: string;
-  storageProvider: 'firebase_storage' | 'cloud_storage';
+  storageProvider: 'cloudinary';
   browserNotice?: string;
+  publicId?: string;
 }
 
 export interface ValidationResult {
@@ -196,131 +195,88 @@ export function validateImageBuffer(buffer: Buffer, claimedMime?: string): Valid
 }
 
 /**
- * Resolves configuration parameters for Google Cloud / Firebase Storage.
+ * Resolves configuration parameters for Cloudinary.
+ * The API key and API secret are read strictly from server-side environment variables.
+ * Credentials are never hardcoded and never exposed to the client.
  */
-export function getStorageBucketConfig(): {
-  bucketName: string;
-  projectId: string;
+export function getCloudinaryConfig(): {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+  isConfigured: boolean;
 } {
-  let bucketName = process.env.STORAGE_BUCKET || process.env.FIREBASE_STORAGE_BUCKET || process.env.GCS_BUCKET || '';
-  let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT || '';
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'nymr1jpy';
+  const apiKey = process.env.CLOUDINARY_API_KEY || '';
+  const apiSecret = process.env.CLOUDINARY_API_SECRET || '';
+  const isConfigured = Boolean(cloudName && apiKey && apiSecret);
 
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      if (!bucketName && config.storageBucket) {
-        bucketName = config.storageBucket;
-      }
-      if (!projectId && config.projectId) {
-        projectId = config.projectId;
-      }
-    } catch {
-      // Continue with env vars
-    }
-  }
-
-  if (!bucketName) {
-    bucketName = 'calm-mote-r8chg.firebasestorage.app';
-  }
-  if (!projectId) {
-    projectId = 'calm-mote-r8chg';
-  }
-
-  return { bucketName, projectId };
+  return { cloudName, apiKey, apiSecret, isConfigured };
 }
 
 /**
- * Initializes Firebase Admin Storage bucket if configured.
+ * Computes a SHA-1 signature according to the official Cloudinary REST API specification.
+ * Serializes alphabetically sorted parameters into key1=val1&key2=val2, appends the API secret,
+ * and produces a hexadecimal SHA-1 digest.
  */
-export function getStorageBucket(): any | null {
-  try {
-    const { bucketName, projectId } = getStorageBucketConfig();
-
-    const apps = adminApp.getApps();
-    const app = apps.length > 0 ? apps[0] : adminApp.initializeApp({
-      projectId,
-      storageBucket: bucketName
-    });
-
-    return adminStorage.getStorage(app).bucket(bucketName);
-  } catch (err) {
-    return null;
-  }
-}
-
-// Cached bucket availability with 30s TTL to prevent repeated network timeouts
-let cloudBucketChecked = false;
-let cloudBucketExists = false;
-let lastCheckTimestamp = 0;
-const BUCKET_CHECK_CACHE_TTL_MS = 30000;
-
-export function resetStorageBucketCache(): void {
-  cloudBucketChecked = false;
-  cloudBucketExists = false;
-  lastCheckTimestamp = 0;
-}
-
-export async function checkCloudBucketAvailable(bucket: any): Promise<boolean> {
-  const now = Date.now();
-  if (cloudBucketChecked && (now - lastCheckTimestamp < BUCKET_CHECK_CACHE_TTL_MS)) {
-    return cloudBucketExists;
-  }
-  try {
-    const [exists] = await bucket.exists();
-    cloudBucketExists = Boolean(exists);
-  } catch {
-    cloudBucketExists = false;
-  }
-  cloudBucketChecked = true;
-  lastCheckTimestamp = now;
-  return cloudBucketExists;
+export function generateCloudinarySignature(
+  params: Record<string, string | number>,
+  apiSecret: string
+): string {
+  const sortedKeys = Object.keys(params).sort();
+  const serialized = sortedKeys.map((k) => `${k}=${params[k]}`).join('&');
+  return crypto.createHash('sha1').update(serialized + apiSecret).digest('hex');
 }
 
 /**
- * Diagnostic status check for Cloud Storage.
+ * Diagnostic status check for Cloudinary storage.
+ * Reports active storage mode, cloud name, upload folder, configuration status,
+ * and diagnostic details without exposing any sensitive credentials or secrets.
  */
 export async function checkStorageStatus(): Promise<{
   available: boolean;
-  bucketName: string;
-  projectId: string;
+  activeStorageMode: 'cloudinary' | 'cloudinary_unavailable';
+  storageProvider: 'cloudinary';
+  cloudName: string;
+  folder: string;
+  configured: boolean;
+  diagnosticInfo: string;
   error?: string;
+  mode?: string;
+  bucketName?: string;
 }> {
-  const { bucketName, projectId } = getStorageBucketConfig();
-  const bucket = getStorageBucket();
-  if (!bucket) {
-    return {
-      available: false,
-      bucketName,
-      projectId,
-      error: 'Firebase Admin Storage could not be initialized.'
-    };
-  }
+  const { cloudName, isConfigured } = getCloudinaryConfig();
+  const folder = 'nineties-shots/portfolio';
 
-  const isAvailable = await checkCloudBucketAvailable(bucket);
-  if (!isAvailable) {
+  if (isConfigured) {
     return {
-      available: false,
-      bucketName,
-      projectId,
-      error: `Storage bucket '${bucketName}' does not exist or is not accessible with current credentials.`
+      available: true,
+      activeStorageMode: 'cloudinary',
+      storageProvider: 'cloudinary',
+      cloudName,
+      folder,
+      configured: true,
+      diagnosticInfo: `Cloudinary media storage is configured and active for durable uploads (cloud: '${cloudName}', folder: '${folder}').`,
+      mode: 'cloudinary'
     };
   }
 
   return {
-    available: true,
-    bucketName,
-    projectId
+    available: false,
+    activeStorageMode: 'cloudinary_unavailable',
+    storageProvider: 'cloudinary',
+    cloudName,
+    folder,
+    configured: false,
+    diagnosticInfo: `Cloudinary media storage requires server credentials (cloud: '${cloudName}', folder: '${folder}'). Server environment variables CLOUDINARY_API_KEY and/or CLOUDINARY_API_SECRET are not configured. Local storage fallback is strictly disabled in production.`,
+    error: `Cloud media storage unavailable: Cloudinary is not configured. Please set the CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET server environment variables.`,
+    mode: 'cloudinary_unavailable'
   };
 }
 
 /**
- * Uploads an authenticated image strictly to permanent Cloud Storage.
- *
- * NOTE (P1 Permanent Media Storage):
- * Local filesystem fallback (/uploads/portfolio/) has been permanently removed.
- * If Cloud Storage is unavailable or unprovisioned, this function throws an error
- * to prevent misleading the administrator and losing media across Cloud Run restarts.
+ * Uploads an authenticated image to Cloudinary using a SERVER-SIDE signed upload.
+ * Stores portfolio images under 'nineties-shots/portfolio' and returns the secure HTTPS URL.
+ * Local filesystem fallback is strictly disabled in production Cloud Run to prevent media loss.
  */
 export async function uploadPortfolioImage(
   buffer: Buffer,
@@ -332,126 +288,142 @@ export async function uploadPortfolioImage(
     throw new Error(validation.error || 'Invalid image file.');
   }
 
+  const { cloudName, apiKey, apiSecret, isConfigured } = getCloudinaryConfig();
+  const folder = 'nineties-shots/portfolio';
+
+  if (!isConfigured) {
+    throw new Error(
+      `[PORTFOLIO UPLOAD ERROR] Cloud media storage unavailable: Cloudinary is not configured. Please set CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET in server environment variables. Ephemeral local storage has been disabled to prevent data loss.`
+    );
+  }
+
   const ext = validation.detectedExt;
   const mime = validation.detectedMime;
   const uniqueToken = crypto.randomBytes(8).toString('hex');
-  const safeFilename = `portfolio-${Date.now()}-${uniqueToken}.${ext}`;
-  const objectPath = `portfolio/${safeFilename}`;
+  const publicId = `portfolio-${Date.now()}-${uniqueToken}`;
+  const safeFilename = `${publicId}.${ext}`;
+  const timestamp = Math.floor(Date.now() / 1000);
 
-  // 1. Verify Cloud Storage bucket is available
-  const bucket = getStorageBucket();
-  const { bucketName, projectId } = getStorageBucketConfig();
+  const signature = generateCloudinarySignature(
+    {
+      folder,
+      public_id: publicId,
+      timestamp
+    },
+    apiSecret
+  );
 
-  if (!bucket) {
-    throw new Error(
-      `Cloud media storage configuration is missing. Ephemeral local storage has been disabled to prevent media loss. Please ensure Firebase/Google Cloud Storage is provisioned for project '${projectId}'.`
-    );
-  }
-
-  const isAvailable = await checkCloudBucketAvailable(bucket);
-  if (!isAvailable) {
-    throw new Error(
-      `Cloud media storage unavailable: bucket '${bucketName}' does not exist or is not accessible from Cloud Run. Ephemeral local storage has been disabled to prevent data loss. Please ensure the Cloud Storage bucket is created in Google Cloud project '${projectId}'.`
-    );
-  }
-
-  // 2. Upload file to Cloud Storage with metadata and download token
-  const downloadToken = crypto.randomUUID();
-  const fileRef = bucket.file(objectPath);
+  const uploadEndpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
 
   try {
-    await fileRef.save(buffer, {
-      metadata: {
-        contentType: mime,
-        cacheControl: 'public, max-age=31536000',
-        metadata: {
-          firebaseStorageDownloadTokens: downloadToken
-        }
-      }
+    const formData = new FormData();
+    const fileBlob = new Blob([buffer], { type: mime });
+    formData.append('file', fileBlob, safeFilename);
+    formData.append('api_key', apiKey);
+    formData.append('timestamp', String(timestamp));
+    formData.append('folder', folder);
+    formData.append('public_id', publicId);
+    formData.append('signature', signature);
+
+    const response = await fetch(uploadEndpoint, {
+      method: 'POST',
+      body: formData
     });
-  } catch (err: any) {
-    cloudBucketExists = false;
-    throw new Error(`Failed to upload image to Cloud Storage: ${err.message || 'Storage write error'}`);
-  }
 
-  // 3. Verify successful object creation
-  try {
-    const [exists] = await fileRef.exists();
-    if (!exists) {
-      throw new Error(`Upload verification failed: object '${objectPath}' was not found in bucket '${bucketName}' after save.`);
+    const responseData = await response.json().catch(() => ({}));
+
+    if (!response.ok || !responseData.secure_url) {
+      const errMsg = responseData.error?.message || response.statusText || 'Upload failed';
+      throw new Error(errMsg);
     }
+
+    const secureUrl: string = responseData.secure_url;
+
+    return {
+      url: secureUrl,
+      filename: safeFilename,
+      size: buffer.length,
+      mimeType: mime,
+      storageProvider: 'cloudinary',
+      browserNotice: validation.browserNotice,
+      publicId: responseData.public_id || `${folder}/${publicId}`
+    };
   } catch (err: any) {
-    throw new Error(`Verification of uploaded object failed: ${err.message || 'Object existence check failed'}`);
+    console.error('[CLOUDINARY UPLOAD ERROR]', err.message);
+    throw new Error(
+      `[PORTFOLIO UPLOAD ERROR] Cloud media storage write failed: ${err.message || 'Unknown error'}.`
+    );
   }
-
-  // 4. Construct persistent public URL
-  let persistentUrl: string;
-  try {
-    await fileRef.makePublic();
-    persistentUrl = `https://storage.googleapis.com/${bucket.name}/${objectPath}`;
-  } catch {
-    // If uniform bucket-level access prevents makePublic(), use standard Firebase Storage download URL
-    const encodedPath = encodeURIComponent(objectPath);
-    persistentUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodedPath}?alt=media&token=${downloadToken}`;
-  }
-
-  return {
-    url: persistentUrl,
-    filename: safeFilename,
-    size: buffer.length,
-    mimeType: mime,
-    storageProvider: 'firebase_storage',
-    browserNotice: validation.browserNotice
-  };
 }
 
 /**
- * Safely deletes an image from Cloud Storage if it belongs to our configured bucket.
- * Ignores external URLs (e.g. Unsplash) and fails gracefully without throwing.
+ * Safely deletes an image from Cloudinary or local test storage if it belongs to our configured paths.
+ * Ignores external URLs (e.g. Unsplash) and legacy URLs, failing gracefully without throwing.
  */
 export async function deleteStorageImage(imageUrl?: string | null): Promise<boolean> {
   if (!imageUrl || typeof imageUrl !== 'string') return false;
 
-  // External URLs (like Unsplash, etc.) are not managed by our Cloud Storage
-  if (
-    imageUrl.startsWith('https://images.unsplash.com/') ||
-    (imageUrl.startsWith('http://') && !imageUrl.includes('storage.googleapis.com'))
-  ) {
+  // Cloudinary image deletion
+  if (imageUrl.includes('res.cloudinary.com')) {
+    const { cloudName, apiKey, apiSecret, isConfigured } = getCloudinaryConfig();
+    if (!isConfigured) return false;
+
+    try {
+      // Cloudinary URL structure:
+      // https://res.cloudinary.com/<cloud>/image/upload/(v<version>/)?(nineties-shots/portfolio/[^.]+)
+      const match = imageUrl.match(/\/image\/upload\/(?:v\d+\/)?([^\.]+)/);
+      if (!match || !match[1]) return false;
+
+      const publicId = decodeURIComponent(match[1]);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = generateCloudinarySignature(
+        {
+          public_id: publicId,
+          timestamp
+        },
+        apiSecret
+      );
+
+      const formData = new FormData();
+      formData.append('public_id', publicId);
+      formData.append('timestamp', String(timestamp));
+      formData.append('api_key', apiKey);
+      formData.append('signature', signature);
+
+      const destroyEndpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`;
+      const res = await fetch(destroyEndpoint, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.result === 'ok') {
+        console.log(`[Storage] Deleted Cloudinary image: ${publicId}`);
+        return true;
+      }
+    } catch (err: any) {
+      console.warn(`[Storage] Non-fatal Cloudinary cleanup notice for '${imageUrl}':`, err.message);
+    }
     return false;
   }
 
-  const bucket = getStorageBucket();
-  if (!bucket) return false;
-
-  try {
-    let objectPath: string | null = null;
-
-    if (imageUrl.includes(`storage.googleapis.com/${bucket.name}/`)) {
-      const parts = imageUrl.split(`storage.googleapis.com/${bucket.name}/`);
-      if (parts[1]) {
-        objectPath = decodeURIComponent(parts[1].split('?')[0]);
+  // Local filesystem cleanup (for past test artifacts)
+  if (imageUrl.startsWith('/uploads/portfolio/') || imageUrl.includes('/uploads/portfolio/')) {
+    try {
+      const cleanPath = imageUrl.split('?')[0];
+      const filename = path.basename(cleanPath);
+      const localFilePath = path.join(process.cwd(), 'uploads', 'portfolio', filename);
+      if (fs.existsSync(localFilePath)) {
+        fs.unlinkSync(localFilePath);
+        console.log(`[Storage] Deleted local portfolio image file: ${filename}`);
+        return true;
       }
-    } else if (imageUrl.includes(`firebasestorage.googleapis.com/v0/b/${bucket.name}/o/`)) {
-      const parts = imageUrl.split(`firebasestorage.googleapis.com/v0/b/${bucket.name}/o/`);
-      if (parts[1]) {
-        objectPath = decodeURIComponent(parts[1].split('?')[0]);
-      }
+    } catch (err: any) {
+      console.warn(`[Storage] Non-fatal local cleanup notice for '${imageUrl}':`, err.message);
     }
-
-    if (!objectPath || !objectPath.startsWith('portfolio/')) {
-      return false;
-    }
-
-    const fileRef = bucket.file(objectPath);
-    const [exists] = await fileRef.exists();
-    if (exists) {
-      await fileRef.delete();
-      console.log(`[Storage] Deleted Cloud Storage object: ${objectPath}`);
-      return true;
-    }
-  } catch (err: any) {
-    console.warn(`[Storage] Non-fatal cleanup notice for '${imageUrl}':`, err.message);
+    return false;
   }
 
+  // External or legacy Firebase Storage URLs
   return false;
 }
+

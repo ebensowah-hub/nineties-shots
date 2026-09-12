@@ -750,7 +750,13 @@ async function startServer() {
           browserNotice: result.browserNotice
         });
       } catch (err: any) {
-        console.error('[PORTFOLIO UPLOAD ERROR]', err.message);
+        const isStorageError = err.message?.includes('[PORTFOLIO UPLOAD ERROR]') || err.message?.includes('Cloud media storage unavailable');
+        if (isStorageError) {
+          console.error('[PORTFOLIO UPLOAD ERROR]', err.message);
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        console.warn('[PORTFOLIO UPLOAD FAILED]', err.message);
         res.status(400).json({ error: err.message || 'Failed to process image upload.' });
       }
     }

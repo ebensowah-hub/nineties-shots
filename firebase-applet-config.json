@@ -1,12 +1,12 @@
 {
-  "projectId": "calm-mote-r8chg",
-  "appId": "1:656799099809:web:7585fa391ae85fd4b039e0",
-  "apiKey": "AIzaSyCMxWnWlFguFbG7TXTCU6Uz7zaUv2b8-w8",
-  "authDomain": "calm-mote-r8chg.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-ninetiesshots-eb39073c-4af1-486f-b7ae-e71084a2f698",
-  "storageBucket": "calm-mote-r8chg.firebasestorage.app",
-  "messagingSenderId": "656799099809",
+  "projectId": "nineties-shots-productio-f62d8",
+  "appId": "1:134494431419:web:455b6cd548d17bc8b7a19e",
+  "apiKey": "AIzaSyD-1SwPgwqxS2ok_-5lUdKrvCroqSv1Qew",
+  "authDomain": "nineties-shots-productio-f62d8.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "nineties-shots-productio-f62d8.firebasestorage.app",
+  "messagingSenderId": "134494431419",
   "measurementId": "",
-  "oAuthClientId": "656799099809-lfc75l8i436beqn12k49nka9b6mr941n.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

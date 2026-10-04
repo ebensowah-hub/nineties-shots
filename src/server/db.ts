@@ -284,9 +284,27 @@ class Database {
       if (existingApps.length > 0) {
         this.app = existingApps[0];
       } else {
-        this.app = adminApp.initializeApp({
-          projectId: projectId || undefined
-        });
+        // Render and other non-Google hosts do not provide Google Application Default
+        // Credentials. Accept a service-account JSON secret without ever committing it.
+        const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+        if (serviceAccountJson) {
+          try {
+            const serviceAccount = JSON.parse(serviceAccountJson);
+            this.app = adminApp.initializeApp({
+              credential: adminApp.cert(serviceAccount),
+              projectId: projectId || serviceAccount.project_id || undefined
+            });
+          } catch (err) {
+            console.error('[DB] FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON. Falling back to Application Default Credentials.', err);
+            this.app = adminApp.initializeApp({
+              projectId: projectId || undefined
+            });
+          }
+        } else {
+          this.app = adminApp.initializeApp({
+            projectId: projectId || undefined
+          });
+        }
       }
 
       this.firestore = databaseId && databaseId !== '(default)'

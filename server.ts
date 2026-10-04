@@ -59,6 +59,34 @@ async function startServer() {
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
+  // Cross-origin API access for the separately hosted Cloudflare Pages frontend.
+  // Keep the API same-origin by default, and only allow explicitly configured origins in production.
+  const configuredOrigins = (process.env.FRONTEND_ORIGIN || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+  app.use((req, res, next) => {
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin && (process.env.NODE_ENV !== 'production' || configuredOrigins.includes(requestOrigin))) {
+      res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Admin-Token');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    }
+
+    if (req.method === 'OPTIONS') {
+      if (requestOrigin && (process.env.NODE_ENV !== 'production' || configuredOrigins.includes(requestOrigin))) {
+        res.status(204).end();
+        return;
+      }
+      res.status(403).json({ error: 'CORS origin not allowed' });
+      return;
+    }
+
+    next();
+  });
+
   // Static uploads directory for portfolio images
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {

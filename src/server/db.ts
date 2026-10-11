@@ -702,6 +702,9 @@ class Database {
         this.firestoreAvailable = false;
       }
     }
+    // In production, never report healthy while running only on the ephemeral local fallback.
+    // Render's filesystem can be replaced on restart; Firestore must be reachable for durable data.
+    if (process.env.NODE_ENV === 'production') return false;
     return this.initialized && this.localStore.portfolio.length > 0;
   }
 

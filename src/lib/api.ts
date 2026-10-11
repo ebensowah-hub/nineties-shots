@@ -19,6 +19,11 @@ import {
 } from '../types';
 
 const TOKEN_STORAGE_KEY = 'ninetiesshots_admin_token';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
 
 export function getStoredAdminToken(): string | null {
   return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
@@ -56,7 +61,7 @@ export async function submitInquiry(formData: {
   budgetRange?: string;
   message: string;
 }): Promise<{ success: boolean; reference: string; inquiry?: Inquiry }> {
-  const res = await fetch('/api/inquiries', {
+  const res = await fetch(apiUrl('/api/inquiries'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(formData)
@@ -77,9 +82,9 @@ export async function getPublicData(): Promise<{
 }> {
   try {
     const [pRes, sRes, cRes] = await Promise.all([
-      fetch('/api/public/portfolio'),
-      fetch('/api/public/services'),
-      fetch('/api/public/config')
+      fetch(apiUrl('/api/public/portfolio')),
+      fetch(apiUrl('/api/public/services')),
+      fetch(apiUrl('/api/public/config'))
     ]);
 
     const portfolio = pRes.ok ? await pRes.json() : [];
@@ -93,19 +98,19 @@ export async function getPublicData(): Promise<{
 }
 
 export async function fetchPublicConfig(): Promise<Partial<SiteConfig>> {
-  const res = await fetch('/api/public/config');
+  const res = await fetch(apiUrl('/api/public/config'));
   if (!res.ok) throw new Error('Failed to load public config');
   return res.json();
 }
 
 export async function fetchPublicPortfolio(): Promise<PortfolioItem[]> {
-  const res = await fetch('/api/public/portfolio');
+  const res = await fetch(apiUrl('/api/public/portfolio'));
   if (!res.ok) throw new Error('Failed to load portfolio');
   return res.json();
 }
 
 export async function fetchPublicServices(): Promise<ServiceItem[]> {
-  const res = await fetch('/api/public/services');
+  const res = await fetch(apiUrl('/api/public/services'));
   if (!res.ok) throw new Error('Failed to load services');
   return res.json();
 }
@@ -115,7 +120,7 @@ export async function trackEvent(
   metadata?: Record<string, any>
 ): Promise<void> {
   try {
-    await fetch('/api/analytics/event', {
+    await fetch(apiUrl('/api/analytics/event'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ eventType, metadata })
@@ -133,7 +138,7 @@ export async function loginAdmin(
   password: string,
   remember: boolean = true
 ): Promise<{ user: AdminUser; token: string }> {
-  const res = await fetch('/api/admin/login', {
+  const res = await fetch(apiUrl('/api/admin/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
@@ -151,7 +156,7 @@ export async function loginAdmin(
 
 export async function adminLogout(): Promise<void> {
   try {
-    await fetch('/api/admin/logout', {
+    await fetch(apiUrl('/api/admin/logout'), {
       method: 'POST',
       headers: getAuthHeaders()
     });
@@ -167,7 +172,7 @@ export async function checkAdminAuthSession(): Promise<{ authenticated: boolean;
   if (!token) return { authenticated: false };
 
   try {
-    const res = await fetch('/api/admin/me', {
+    const res = await fetch(apiUrl('/api/admin/me'), {
       headers: getAuthHeaders()
     });
 
@@ -192,7 +197,7 @@ export async function changeAdminPassword(
   currentPassword: string,
   newPassword: string
 ): Promise<{ success: boolean; message?: string; token?: string; user?: AdminUser }> {
-  const res = await fetch('/api/admin/change-password', {
+  const res = await fetch(apiUrl('/api/admin/change-password'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ currentPassword, newPassword })
@@ -213,7 +218,7 @@ export async function changeAdminPassword(
 export async function revokeAllAdminSessions(
   keepCurrent: boolean = false
 ): Promise<{ success: boolean; revokedCount: number; message: string }> {
-  const res = await fetch('/api/admin/sessions/revoke-all', {
+  const res = await fetch(apiUrl('/api/admin/sessions/revoke-all'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ keepCurrent })
@@ -237,7 +242,7 @@ export async function getAdminDashboard(): Promise<{
   recentInquiries: Inquiry[];
   upcomingBookings: Booking[];
 }> {
-  const res = await fetch('/api/admin/dashboard', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/dashboard'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load dashboard data');
   return res.json();
 }
@@ -250,14 +255,14 @@ export async function getAdminInquiries(search?: string, status?: string): Promi
   if (search) params.append('search', search);
   if (status) params.append('status', status);
 
-  const res = await fetch(`/api/admin/inquiries?${params.toString()}`, { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl(`/api/admin/inquiries?${params.toString()}`), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load inquiries');
   const data = await res.json();
   return Array.isArray(data) ? { inquiries: data } : data;
 }
 
 export async function updateInquiryStatus(id: string, status: InquiryStatus): Promise<Inquiry> {
-  const res = await fetch(`/api/admin/inquiries/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/inquiries/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify({ status })
@@ -267,7 +272,7 @@ export async function updateInquiryStatus(id: string, status: InquiryStatus): Pr
 }
 
 export async function updateInquiryNotes(id: string, notes: string): Promise<Inquiry> {
-  const res = await fetch(`/api/admin/inquiries/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/inquiries/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify({ notes })
@@ -277,7 +282,7 @@ export async function updateInquiryNotes(id: string, notes: string): Promise<Inq
 }
 
 export async function updateAdminInquiry(id: string, updates: Partial<Inquiry>): Promise<Inquiry> {
-  const res = await fetch(`/api/admin/inquiries/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/inquiries/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates)
@@ -292,7 +297,7 @@ export async function convertInquiryToBooking(
   depositAmount: number = 0,
   notes?: string
 ): Promise<{ success: boolean; booking: Booking }> {
-  const res = await fetch(`/api/admin/inquiries/${id}/convert-booking`, {
+  const res = await fetch(apiUrl(`/api/admin/inquiries/${id}/convert-booking`), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ quoteAmount, depositAmount, notes })
@@ -302,7 +307,7 @@ export async function convertInquiryToBooking(
 }
 
 export async function deleteInquiry(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/inquiries/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/inquiries/${id}`), {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
@@ -317,14 +322,14 @@ export async function getAdminBookings(search?: string, status?: string): Promis
   if (search) params.append('search', search);
   if (status) params.append('status', status);
 
-  const res = await fetch(`/api/admin/bookings?${params.toString()}`, { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl(`/api/admin/bookings?${params.toString()}`), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load bookings');
   const data = await res.json();
   return Array.isArray(data) ? { bookings: data } : data;
 }
 
 export async function createAdminBooking(bookingData: Partial<Booking>): Promise<Booking> {
-  const res = await fetch('/api/admin/bookings', {
+  const res = await fetch(apiUrl('/api/admin/bookings'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(bookingData)
@@ -334,7 +339,7 @@ export async function createAdminBooking(bookingData: Partial<Booking>): Promise
 }
 
 export async function updateAdminBooking(id: string, updates: Partial<Booking>): Promise<Booking> {
-  const res = await fetch(`/api/admin/bookings/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/bookings/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates)
@@ -344,7 +349,7 @@ export async function updateAdminBooking(id: string, updates: Partial<Booking>):
 }
 
 export async function deleteAdminBooking(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/bookings/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/bookings/${id}`), {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
@@ -356,20 +361,20 @@ export async function getAdminClients(search?: string): Promise<{ clients: Clien
   const params = new URLSearchParams();
   if (search) params.append('search', search);
 
-  const res = await fetch(`/api/admin/clients?${params.toString()}`, { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl(`/api/admin/clients?${params.toString()}`), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load clients');
   const data = await res.json();
   return Array.isArray(data) ? { clients: data } : data;
 }
 
 export async function getAdminClientDetail(id: string): Promise<{ client: Client; inquiries: Inquiry[]; bookings: Booking[] }> {
-  const res = await fetch(`/api/admin/clients/${id}`, { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl(`/api/admin/clients/${id}`), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load client details');
   return res.json();
 }
 
 export async function updateClientNotes(id: string, notes: string): Promise<Client> {
-  const res = await fetch(`/api/admin/clients/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/clients/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify({ notes })
@@ -379,7 +384,7 @@ export async function updateClientNotes(id: string, notes: string): Promise<Clie
 }
 
 export async function updateAdminClient(id: string, updates: Partial<Client>): Promise<Client> {
-  const res = await fetch(`/api/admin/clients/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/clients/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates)
@@ -390,14 +395,14 @@ export async function updateAdminClient(id: string, updates: Partial<Client>): P
 
 // ==================== PORTFOLIO ====================
 export async function getAdminPortfolio(): Promise<{ portfolio: PortfolioItem[] }> {
-  const res = await fetch('/api/admin/portfolio', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/portfolio'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load portfolio');
   const data = await res.json();
   return Array.isArray(data) ? { portfolio: data } : data;
 }
 
 export async function createPortfolioItem(item: Partial<PortfolioItem>): Promise<PortfolioItem> {
-  const res = await fetch('/api/admin/portfolio', {
+  const res = await fetch(apiUrl('/api/admin/portfolio'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(item)
@@ -409,7 +414,7 @@ export async function createPortfolioItem(item: Partial<PortfolioItem>): Promise
 export const addAdminPortfolioItem = createPortfolioItem;
 
 export async function updatePortfolioItem(id: string, updates: Partial<PortfolioItem>): Promise<PortfolioItem> {
-  const res = await fetch(`/api/admin/portfolio/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/portfolio/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates)
@@ -421,7 +426,7 @@ export async function updatePortfolioItem(id: string, updates: Partial<Portfolio
 export const updateAdminPortfolioItem = updatePortfolioItem;
 
 export async function deletePortfolioItem(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/portfolio/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/portfolio/${id}`), {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
@@ -431,7 +436,7 @@ export async function deletePortfolioItem(id: string): Promise<void> {
 export const deleteAdminPortfolioItem = deletePortfolioItem;
 
 export async function setHeroPortfolioItem(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/portfolio/${id}/set-hero`, {
+  const res = await fetch(apiUrl(`/api/admin/portfolio/${id}/set-hero`), {
     method: 'POST',
     headers: getAuthHeaders()
   });
@@ -441,7 +446,7 @@ export async function setHeroPortfolioItem(id: string): Promise<void> {
 export const setHeroPhotograph = setHeroPortfolioItem;
 
 export async function setPhotographerPortrait(url: string, alt?: string): Promise<void> {
-  const res = await fetch('/api/admin/portfolio/portrait', {
+  const res = await fetch(apiUrl('/api/admin/portfolio/portrait'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ url, alt })
@@ -461,7 +466,7 @@ export async function uploadPortfolioImage(file: File): Promise<{
   const formData = new FormData();
   formData.append('image', file);
 
-  const res = await fetch('/api/admin/portfolio/upload', {
+  const res = await fetch(apiUrl('/api/admin/portfolio/upload'), {
     method: 'POST',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {})
@@ -479,14 +484,14 @@ export async function uploadPortfolioImage(file: File): Promise<{
 
 // ==================== SERVICES ====================
 export async function getAdminServices(): Promise<{ services: ServiceItem[] }> {
-  const res = await fetch('/api/admin/services', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/services'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load services');
   const data = await res.json();
   return Array.isArray(data) ? { services: data } : data;
 }
 
 export async function createAdminService(service: Partial<ServiceItem>): Promise<ServiceItem> {
-  const res = await fetch('/api/admin/services', {
+  const res = await fetch(apiUrl('/api/admin/services'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(service)
@@ -498,7 +503,7 @@ export async function createAdminService(service: Partial<ServiceItem>): Promise
 export const addAdminService = createAdminService;
 
 export async function updateAdminService(id: string, updates: Partial<ServiceItem>): Promise<ServiceItem> {
-  const res = await fetch(`/api/admin/services/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/services/${id}`), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(updates)
@@ -508,7 +513,7 @@ export async function updateAdminService(id: string, updates: Partial<ServiceIte
 }
 
 export async function deleteAdminService(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/services/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/services/${id}`), {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
@@ -517,14 +522,14 @@ export async function deleteAdminService(id: string): Promise<void> {
 
 // ==================== SETTINGS ====================
 export async function getAdminSettings(): Promise<{ settings: any }> {
-  const res = await fetch('/api/admin/settings', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/settings'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load settings');
   const data = await res.json();
   return data.settings ? data : { settings: data };
 }
 
 export async function updateAdminSettings(settings: Partial<any>): Promise<{ settings: any }> {
-  const res = await fetch('/api/admin/settings', {
+  const res = await fetch(apiUrl('/api/admin/settings'), {
     method: 'PATCH',
     headers: getAuthHeaders(),
     body: JSON.stringify(settings)
@@ -535,14 +540,14 @@ export async function updateAdminSettings(settings: Partial<any>): Promise<{ set
 
 // ==================== ANALYTICS & AUDIT ====================
 export async function getAdminAnalytics(): Promise<{ analytics: any }> {
-  const res = await fetch('/api/admin/analytics', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/analytics'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load analytics');
   const data = await res.json();
   return data.analytics ? data : { analytics: data };
 }
 
 export async function getAdminAuditLogs(): Promise<{ logs: AuditLog[] }> {
-  const res = await fetch('/api/admin/audit-logs', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/audit-logs'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load activity logs');
   const data = await res.json();
   return Array.isArray(data) ? { logs: data } : data;
@@ -555,7 +560,7 @@ export async function getExchangeRates(base?: string): Promise<{
   rates: Record<string, { rate: number; isLive: boolean; lastUpdated: string; provider: string; error?: string }>;
   supportedCurrencies: { code: string; name: string; symbol: string; flag: string }[];
 }> {
-  const url = base ? `/api/admin/currency/rates?base=${encodeURIComponent(base)}` : '/api/admin/currency/rates';
+  const url = base ? apiUrl(`/api/admin/currency/rates?base=${encodeURIComponent(base)}`) : apiUrl('/api/admin/currency/rates');
   const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to fetch rates' }));
@@ -575,7 +580,7 @@ export async function convertCurrencyAdmin(
   formattedOriginal: string;
   formattedGHS: string;
 }> {
-  const res = await fetch('/api/admin/currency/convert', {
+  const res = await fetch(apiUrl('/api/admin/currency/convert'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({ amount, fromCurrency, manualRate, note })
@@ -590,13 +595,13 @@ export async function convertCurrencyAdmin(
 }
 
 export async function getConversionHistory(): Promise<any[]> {
-  const res = await fetch('/api/admin/currency/history', { headers: getAuthHeaders() });
+  const res = await fetch(apiUrl('/api/admin/currency/history'), { headers: getAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load conversion history');
   return res.json();
 }
 
 export async function clearConversionHistory(): Promise<void> {
-  const res = await fetch('/api/admin/currency/history/clear', {
+  const res = await fetch(apiUrl('/api/admin/currency/history/clear'), {
     method: 'POST',
     headers: getAuthHeaders()
   });
@@ -614,7 +619,7 @@ export async function getFinanceOverview(params?: {
   if (params?.startDate) query.set('startDate', params.startDate);
   if (params?.endDate) query.set('endDate', params.endDate);
 
-  const url = `/api/admin/finance/overview${query.toString() ? '?' + query.toString() : ''}`;
+  const url = apiUrl(`/api/admin/finance/overview${query.toString() ? '?' + query.toString() : ''}`);
   const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to fetch financial overview' }));
@@ -633,7 +638,7 @@ export async function getFinanceAnalytics(params?: {
   if (params?.startDate) query.set('startDate', params.startDate);
   if (params?.endDate) query.set('endDate', params.endDate);
 
-  const url = `/api/admin/finance/analytics${query.toString() ? '?' + query.toString() : ''}`;
+  const url = apiUrl(`/api/admin/finance/analytics${query.toString() ? '?' + query.toString() : ''}`);
   const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to fetch financial analytics' }));
@@ -660,7 +665,7 @@ export async function getFinancialTransactions(params?: {
   if (params?.endDate) query.set('endDate', params.endDate);
   if (params?.limit) query.set('limit', String(params.limit));
 
-  const url = `/api/admin/finance/transactions${query.toString() ? '?' + query.toString() : ''}`;
+  const url = apiUrl(`/api/admin/finance/transactions${query.toString() ? '?' + query.toString() : ''}`);
   const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to fetch financial transactions' }));
@@ -685,7 +690,7 @@ export async function getAdminExpenses(params?: {
   if (params?.endDate) query.set('endDate', params.endDate);
   if (params?.paymentMethod) query.set('paymentMethod', params.paymentMethod);
 
-  const url = `/api/admin/expenses${query.toString() ? '?' + query.toString() : ''}`;
+  const url = apiUrl(`/api/admin/expenses${query.toString() ? '?' + query.toString() : ''}`);
   const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to fetch expenses' }));
@@ -695,7 +700,7 @@ export async function getAdminExpenses(params?: {
 }
 
 export async function createAdminExpense(data: Partial<Expense>): Promise<Expense> {
-  const res = await fetch('/api/admin/expenses', {
+  const res = await fetch(apiUrl('/api/admin/expenses'), {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify(data)
@@ -708,7 +713,7 @@ export async function createAdminExpense(data: Partial<Expense>): Promise<Expens
 }
 
 export async function updateAdminExpense(id: string, data: Partial<Expense>): Promise<Expense> {
-  const res = await fetch(`/api/admin/expenses/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/expenses/${id}`), {
     method: 'PUT',
     headers: getAuthHeaders(),
     body: JSON.stringify(data)
@@ -721,7 +726,7 @@ export async function updateAdminExpense(id: string, data: Partial<Expense>): Pr
 }
 
 export async function deleteAdminExpense(id: string): Promise<void> {
-  const res = await fetch(`/api/admin/expenses/${id}`, {
+  const res = await fetch(apiUrl(`/api/admin/expenses/${id}`), {
     method: 'DELETE',
     headers: getAuthHeaders()
   });

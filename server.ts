@@ -86,6 +86,22 @@ async function startServer() {
     next();
   });
 
+  // Mark every API JSON response with the storage source actually in use at send time.
+  app.use('/api', (req, res, next) => {
+    const originalJson = res.json.bind(res);
+    res.json = ((body: any) => {
+      const status = db.getStorageStatus();
+      res.setHeader('X-Data-Source', status.source);
+      if (status.durableStorage === 'unavailable') {
+        res.setHeader('X-Storage-Warning', 'Durable database unavailable; local fallback data may be stale and business writes are disabled.');
+      } else {
+        res.removeHeader('X-Storage-Warning');
+      }
+      return originalJson(body);
+    }) as typeof res.json;
+    next();
+  });
+
   // ==================== AUTH MIDDLEWARE ====================
   const requireAdminAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     const authHeader = req.headers.authorization;

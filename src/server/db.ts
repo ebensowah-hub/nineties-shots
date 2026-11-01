@@ -324,57 +324,63 @@ class Database {
     return {
       batch: () => {
         let realBatch: any = null;
-        const operations: Array<{ collectionName: string; apply: () => void }> = [];
+        const operations: Array<{ type: 'set' | 'update' | 'delete'; collectionName: string; docId: string; data?: any }> = [];
         const getBatch = () => {
           if (!realBatch) {
-            if (!self.firestore || !self.firestoreAvailable) {
-              throw new DurableStorageUnavailableError();
-            }
+            if (!self.firestore || !self.firestoreAvailable) throw new DurableStorageUnavailableError();
             realBatch = self.firestore.batch();
           }
           return realBatch;
         };
-
+        const queue = (type: 'set' | 'update' | 'delete', docRef: any, data?: any) => {
+          const collectionName = docRef?.__collectionName || docRef?.parent?.id || '';
+          const realDocRef = docRef?.__realDocRef || (docRef?.parent ? docRef : null);
+          if (durableCollections.has(collectionName) && (!self.firestore || !self.firestoreAvailable)) {
+            throw new DurableStorageUnavailableError();
+          }
+          if (realDocRef) {
+            const batch = getBatch();
+            if (type === 'set') batch.set(realDocRef, data);
+            else if (type === 'update') batch.update(realDocRef, data);
+            else batch.delete(realDocRef);
+          }
+          operations.push({ type, collectionName, docId: docRef?.id, data });
+        };
         return {
-          set: (docRef: any, data: any) => {
-            const collectionName = docRef?.__collectionName || '';
-            assertWritable(collectionName);
-            if (docRef?.__realDocRef) getBatch().set(docRef.__realDocRef, data);
-            operations.push({
-              collectionName,
-              apply: () => { if (docRef && typeof docRef.setLocal === 'function') docRef.setLocal(data); }
-            });
-          },
-          update: (docRef: any, data: any) => {
-            const collectionName = docRef?.__collectionName || '';
-            assertWritable(collectionName);
-            if (docRef?.__realDocRef) getBatch().update(docRef.__realDocRef, data);
-            operations.push({
-              collectionName,
-              apply: () => { if (docRef && typeof docRef.updateLocal === 'function') docRef.updateLocal(data); }
-            });
-          },
-          delete: (docRef: any) => {
-            const collectionName = docRef?.__collectionName || '';
-            assertWritable(collectionName);
-            if (docRef?.__realDocRef) getBatch().delete(docRef.__realDocRef);
-            operations.push({
-              collectionName,
-              apply: () => { if (docRef && typeof docRef.deleteLocal === 'function') docRef.deleteLocal(); }
-            });
-          },
+          set: (docRef: any, data: any) => queue('set', docRef, data),
+          update: (docRef: any, data: any) => queue('update', docRef, data),
+          delete: (docRef: any) => queue('delete', docRef),
           commit: async () => {
+            if (operations.some(op => durableCollections.has(op.collectionName)) && !realBatch) {
+              throw new DurableStorageUnavailableError();
+            }
             if (realBatch) {
-              try {
-                await realBatch.commit();
-              } catch (err: any) {
+              try { await realBatch.commit(); }
+              catch (err: any) {
                 self.firestoreAvailable = false;
                 throw new DurableStorageUnavailableError(err?.message);
               }
-            } else if (operations.some(op => durableCollections.has(op.collectionName))) {
-              throw new DurableStorageUnavailableError();
             }
-            for (const operation of operations) operation.apply();
+            for (const op of operations) {
+              if (!op.collectionName || !op.docId) continue;
+              if (op.collectionName === 'settings') {
+                if (op.type !== 'delete') self.localStore.settings = { ...self.localStore.settings, ...sanitizeForFirestore(op.data || {}) };
+                continue;
+              }
+              const list = (self.localStore as any)[op.collectionName];
+              if (!Array.isArray(list)) continue;
+              const key = op.collectionName === 'sessions' ? 'token' : 'id';
+              const idx = list.findIndex((item: any) => item[key] === op.docId);
+              if (op.type === 'delete') {
+                if (idx >= 0) list.splice(idx, 1);
+              } else if (op.type === 'set') {
+                const item = { ...sanitizeForFirestore(op.data || {}), [key]: op.docId };
+                if (idx >= 0) list[idx] = item; else list.push(item);
+              } else if (idx >= 0) {
+                list[idx] = { ...list[idx], ...sanitizeForFirestore(op.data || {}) };
+              }
+            }
+            self.saveLocalStore();
           }
         };
       },

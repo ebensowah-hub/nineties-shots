@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
-import { db } from './src/server/db';
+import { db, DurableStorageUnavailableError } from './src/server/db';
 import { AdminUser } from './src/types';
 import { uploadPortfolioImage, MAX_FILE_SIZE_BYTES, checkStorageStatus } from './src/server/storageService';
 import {
@@ -126,6 +126,10 @@ async function startServer() {
   };
 
   // ==================== PUBLIC API ENDPOINTS ====================
+  app.get('/api/storage-status', (req, res) => {
+    const status = db.getStorageStatus();
+    res.status(status.durableStorage === 'available' ? 200 : 503).json(status);
+  });
   // Production-grade health check that tests database readiness and static asset availability
   app.get('/api/health', async (req, res) => {
     try {
@@ -416,6 +420,12 @@ async function startServer() {
   });
 
   // ==================== ADMIN PROTECTED CRUD ====================
+  // Durable database status for the authenticated admin dashboard.
+  app.get('/api/admin/storage-status', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    const status = db.getStorageStatus();
+    res.status(status.durableStorage === 'available' ? 200 : 503).json(status);
+  });
+
   // Dashboard Overview
   app.get('/api/admin/dashboard', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {

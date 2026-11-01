@@ -38,6 +38,14 @@ import { portfolioItems as defaultPortfolioItems, heroImage as defaultHero, phot
 import { servicesData as defaultServices } from '../data/servicesData';
 import { siteConfig as defaultSiteConfig } from '../data/siteConfig';
 
+export class DurableStorageUnavailableError extends Error {
+  public readonly code = 'STORAGE_UNAVAILABLE';
+  constructor(message?: string) {
+    super('Durable database storage is unavailable. No business data was saved.' + (message ? ` Details: ${message}` : ''));
+    this.name = 'DurableStorageUnavailableError';
+  }
+}
+
 export interface StoredAdminUser extends AdminUser {
   passwordHash: string;
   mustChangePassword?: boolean;
@@ -303,93 +311,83 @@ class Database {
 
   private getDB(): any {
     const self = this;
-    const isOnline = self.firestore !== null && self.firestoreAvailable;
+    const durableCollections = new Set([
+      'inquiries', 'bookings', 'clients', 'expenses', 'portfolio',
+      'services', 'settings', 'conversionHistory'
+    ]);
+    const assertWritable = (collectionName: string) => {
+      if (durableCollections.has(collectionName) && (!self.firestore || !self.firestoreAvailable)) {
+        throw new DurableStorageUnavailableError();
+      }
+    };
 
     return {
       batch: () => {
         let realBatch: any = null;
-        if (isOnline) {
-          try {
-            realBatch = self.firestore!.batch();
-          } catch {
-            realBatch = null;
+        const operations: Array<{ type: 'set' | 'update' | 'delete'; collectionName: string; docId: string; data?: any }> = [];
+        const getBatch = () => {
+          if (!realBatch) {
+            if (!self.firestore || !self.firestoreAvailable) throw new DurableStorageUnavailableError();
+            realBatch = self.firestore.batch();
           }
-        }
-        const operations: Array<() => void> = [];
-
+          return realBatch;
+        };
+        const queue = (type: 'set' | 'update' | 'delete', docRef: any, data?: any) => {
+          const collectionName = docRef?.__collectionName || docRef?.parent?.id || '';
+          const realDocRef = docRef?.__realDocRef || (docRef?.parent ? docRef : null);
+          if (durableCollections.has(collectionName) && (!self.firestore || !self.firestoreAvailable)) {
+            throw new DurableStorageUnavailableError();
+          }
+          if (realDocRef) {
+            const batch = getBatch();
+            if (type === 'set') batch.set(realDocRef, data);
+            else if (type === 'update') batch.update(realDocRef, data);
+            else batch.delete(realDocRef);
+          }
+          operations.push({ type, collectionName, docId: docRef?.id, data });
+        };
         return {
-          set: (docRef: any, data: any) => {
-            operations.push(() => {
-              if (docRef && typeof docRef.set === 'function') {
-                docRef.set(data);
-              }
-            });
-            if (realBatch && docRef?.__realDocRef) {
-              try {
-                realBatch.set(docRef.__realDocRef, data);
-              } catch {
-                // Ignore real batch error in fallback
-              }
-            }
-          },
-          update: (docRef: any, data: any) => {
-            operations.push(() => {
-              if (docRef && typeof docRef.update === 'function') {
-                docRef.update(data);
-              }
-            });
-            if (realBatch && docRef?.__realDocRef) {
-              try {
-                realBatch.update(docRef.__realDocRef, data);
-              } catch {
-                // Ignore real batch error in fallback
-              }
-            }
-          },
-          delete: (docRef: any) => {
-            operations.push(() => {
-              if (docRef && typeof docRef.delete === 'function') {
-                docRef.delete();
-              }
-            });
-            if (realBatch && docRef?.__realDocRef) {
-              try {
-                realBatch.delete(docRef.__realDocRef);
-              } catch {
-                // Ignore real batch error in fallback
-              }
-            }
-          },
+          set: (docRef: any, data: any) => queue('set', docRef, data),
+          update: (docRef: any, data: any) => queue('update', docRef, data),
+          delete: (docRef: any) => queue('delete', docRef),
           commit: async () => {
-            for (const op of operations) {
-              op();
+            if (operations.some(op => durableCollections.has(op.collectionName)) && !realBatch) {
+              throw new DurableStorageUnavailableError();
             }
             if (realBatch) {
-              try {
-                await realBatch.commit();
-              } catch (err: any) {
-                console.warn('[DB] Firestore batch commit error:', err.message);
+              try { await realBatch.commit(); }
+              catch (err: any) {
                 self.firestoreAvailable = false;
+                throw new DurableStorageUnavailableError(err?.message);
               }
             }
+            for (const op of operations) {
+              if (!op.collectionName || !op.docId) continue;
+              if (op.collectionName === 'settings') {
+                if (op.type !== 'delete') self.localStore.settings = { ...self.localStore.settings, ...sanitizeForFirestore(op.data || {}) };
+                continue;
+              }
+              const list = (self.localStore as any)[op.collectionName];
+              if (!Array.isArray(list)) continue;
+              const key = op.collectionName === 'sessions' ? 'token' : 'id';
+              const idx = list.findIndex((item: any) => item[key] === op.docId);
+              if (op.type === 'delete') {
+                if (idx >= 0) list.splice(idx, 1);
+              } else if (op.type === 'set') {
+                const item = { ...sanitizeForFirestore(op.data || {}), [key]: op.docId };
+                if (idx >= 0) list[idx] = item; else list.push(item);
+              } else if (idx >= 0) {
+                list[idx] = { ...list[idx], ...sanitizeForFirestore(op.data || {}) };
+              }
+            }
+            self.saveLocalStore();
           }
         };
       },
 
       collection: (colName: string) => {
-        let realCol: any = null;
-        if (isOnline) {
-          try {
-            realCol = self.firestore!.collection(colName);
-          } catch {
-            realCol = null;
-          }
-        }
-
         const getColList = (): any[] => {
-          if (colName === 'settings') {
-            return [self.localStore.settings];
-          }
+          if (colName === 'settings') return [self.localStore.settings];
           const list = (self.localStore as any)[colName];
           return Array.isArray(list) ? list : [];
         };
@@ -401,133 +399,129 @@ class Database {
           }
         };
 
-        const createDocRef = (docId?: string) => {
+        const createDocRef = (docId?: string): any => {
           const id = docId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           let realDocRef: any = null;
-          if (isOnline && realCol) {
-            try {
-              realDocRef = realCol.doc(id);
-            } catch {
-              realDocRef = null;
-            }
+          if (self.firestore && self.firestoreAvailable) {
+            try { realDocRef = self.firestore.collection(colName).doc(id); }
+            catch { realDocRef = null; }
           }
+
+          const applySetLocal = (data: any) => {
+            const cleanData = sanitizeForFirestore(data);
+            if (colName === 'settings') {
+              self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+              self.saveLocalStore();
+              return;
+            }
+            const list = getColList();
+            const lookupKey = colName === 'sessions' ? 'token' : 'id';
+            const matchVal = cleanData[lookupKey] || id;
+            const idx = list.findIndex((it: any) => it[lookupKey] === matchVal);
+            const stored = { ...cleanData, [lookupKey]: matchVal };
+            if (idx >= 0) list[idx] = stored; else list.push(stored);
+            setColList(list);
+          };
+          const applyUpdateLocal = (data: any) => {
+            const cleanData = sanitizeForFirestore(data);
+            if (colName === 'settings') {
+              self.localStore.settings = { ...self.localStore.settings, ...cleanData };
+              self.saveLocalStore();
+              return;
+            }
+            const list = getColList();
+            const lookupKey = colName === 'sessions' ? 'token' : 'id';
+            const idx = list.findIndex((it: any) => it[lookupKey] === id);
+            if (idx >= 0) {
+              list[idx] = { ...list[idx], ...cleanData };
+              setColList(list);
+            }
+          };
+          const applyDeleteLocal = () => {
+            if (colName === 'settings') return;
+            const lookupKey = colName === 'sessions' ? 'token' : 'id';
+            setColList(getColList().filter((it: any) => it[lookupKey] !== id));
+          };
 
           return {
             id,
+            __collectionName: colName,
             __realDocRef: realDocRef,
             get: async () => {
-              if (isOnline && realDocRef) {
-                try {
-                  const snap = await realDocRef.get();
-                  return snap;
-                } catch (err: any) {
-                  if (self.firestoreAvailable) {
-                    console.warn(`[DB] Firestore doc get error on ${colName}/${id} (${err.message}). Using local store.`);
-                    self.firestoreAvailable = false;
-                  }
+              const currentRealRef = self.firestore && self.firestoreAvailable
+                ? self.firestore.collection(colName).doc(id) : null;
+              if (currentRealRef) {
+                try { return await currentRealRef.get(); }
+                catch (err: any) {
+                  self.firestoreAvailable = false;
+                  console.warn(`[DB] Firestore doc read failed for ${colName}/${id}; local snapshot fallback is active: ${err.message}`);
                 }
               }
               if (colName === 'settings') {
-                return {
-                  id: 'global',
-                  exists: true,
-                  data: () => ({ ...self.localStore.settings })
-                };
+                return { id: 'global', exists: true, data: () => ({ ...self.localStore.settings }) };
               }
               const list = getColList();
               const item = list.find((it: any) => it.id === id || (colName === 'sessions' && it.token === id));
-              return {
-                id,
-                exists: !!item,
-                data: () => (item ? { ...item } : undefined)
-              };
+              return { id, exists: !!item, data: () => (item ? { ...item } : undefined) };
             },
-
+            setLocal: applySetLocal,
+            updateLocal: applyUpdateLocal,
+            deleteLocal: applyDeleteLocal,
             set: async (data: any) => {
+              assertWritable(colName);
               const cleanData = sanitizeForFirestore(data);
-              if (colName === 'settings') {
-                self.localStore.settings = { ...self.localStore.settings, ...cleanData };
-                self.saveLocalStore();
-              } else {
-                const list = getColList();
-                const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                const matchVal = cleanData[lookupKey] || id;
-                const idx = list.findIndex((it: any) => it[lookupKey] === matchVal);
-                const toStore = { ...cleanData, [lookupKey]: matchVal };
-                if (idx >= 0) {
-                  list[idx] = toStore;
-                } else {
-                  list.push(toStore);
-                }
-                setColList(list);
-              }
-
-              if (isOnline && realDocRef) {
-                try {
-                  await realDocRef.set(cleanData);
-                } catch (err: any) {
-                  console.warn(`[DB] Firestore doc set error on ${colName}/${id} (${err.message}).`);
+              if (self.firestore && self.firestoreAvailable) {
+                try { await self.firestore.collection(colName).doc(id).set(cleanData); }
+                catch (err: any) {
                   self.firestoreAvailable = false;
+                  if (durableCollections.has(colName)) throw new DurableStorageUnavailableError(err?.message);
+                  console.warn(`[DB] Firestore set failed for ${colName}/${id}: ${err.message}`);
+                  throw err;
                 }
+              } else if (durableCollections.has(colName)) {
+                throw new DurableStorageUnavailableError();
               }
+              applySetLocal(cleanData);
             },
-
             update: async (data: any) => {
+              assertWritable(colName);
               const cleanData = sanitizeForFirestore(data);
-              if (colName === 'settings') {
-                self.localStore.settings = { ...self.localStore.settings, ...cleanData };
-                self.saveLocalStore();
-              } else {
-                const list = getColList();
-                const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                const idx = list.findIndex((it: any) => it[lookupKey] === id);
-                if (idx >= 0) {
-                  list[idx] = { ...list[idx], ...cleanData };
-                  setColList(list);
-                }
-              }
-
-              if (isOnline && realDocRef) {
-                try {
-                  await realDocRef.update(cleanData);
-                } catch (err: any) {
-                  console.warn(`[DB] Firestore doc update error on ${colName}/${id} (${err.message}).`);
+              if (self.firestore && self.firestoreAvailable) {
+                try { await self.firestore.collection(colName).doc(id).update(cleanData); }
+                catch (err: any) {
                   self.firestoreAvailable = false;
+                  if (durableCollections.has(colName)) throw new DurableStorageUnavailableError(err?.message);
+                  throw err;
                 }
+              } else if (durableCollections.has(colName)) {
+                throw new DurableStorageUnavailableError();
               }
+              applyUpdateLocal(cleanData);
             },
-
             delete: async () => {
-              if (colName !== 'settings') {
-                const list = getColList();
-                const lookupKey = colName === 'sessions' ? 'token' : 'id';
-                const filtered = list.filter((it: any) => it[lookupKey] !== id);
-                setColList(filtered);
-              }
-
-              if (isOnline && realDocRef) {
-                try {
-                  await realDocRef.delete();
-                } catch (err: any) {
-                  console.warn(`[DB] Firestore doc delete error on ${colName}/${id} (${err.message}).`);
+              assertWritable(colName);
+              if (self.firestore && self.firestoreAvailable) {
+                try { await self.firestore.collection(colName).doc(id).delete(); }
+                catch (err: any) {
                   self.firestoreAvailable = false;
+                  if (durableCollections.has(colName)) throw new DurableStorageUnavailableError(err?.message);
+                  throw err;
                 }
+              } else if (durableCollections.has(colName)) {
+                throw new DurableStorageUnavailableError();
               }
+              applyDeleteLocal();
             }
           };
         };
 
         return {
           get: async () => {
-            if (isOnline && realCol) {
-              try {
-                const snap = await realCol.get();
-                return snap;
-              } catch (err: any) {
-                if (self.firestoreAvailable) {
-                  console.warn(`[DB] Firestore query error on ${colName} (${err.message}). Using local store.`);
-                  self.firestoreAvailable = false;
-                }
+            if (self.firestore && self.firestoreAvailable) {
+              try { return await self.firestore.collection(colName).get(); }
+              catch (err: any) {
+                self.firestoreAvailable = false;
+                console.warn(`[DB] Firestore query failed for ${colName}; local snapshot fallback is active: ${err.message}`);
               }
             }
             const list = getColList();
@@ -535,16 +529,10 @@ class Database {
               empty: list.length === 0,
               docs: list.map((item: any) => {
                 const docId = item.id || (colName === 'sessions' ? item.token : undefined) || (colName === 'settings' ? 'global' : 'item');
-                return {
-                  id: docId,
-                  exists: true,
-                  data: () => ({ ...item }),
-                  ref: createDocRef(docId)
-                };
+                return { id: docId, exists: true, data: () => ({ ...item }), ref: createDocRef(docId) };
               })
             };
           },
-
           doc: (docId?: string) => createDocRef(docId)
         };
       }
@@ -673,6 +661,15 @@ class Database {
     this.initialized = true;
   }
 
+  public getStorageStatus(): { applicationInitialized: boolean; durableStorage: 'available' | 'unavailable'; source: 'firestore' | 'local-fallback' } {
+    const available = Boolean(this.firestore && this.firestoreAvailable);
+    return {
+      applicationInitialized: this.initialized,
+      durableStorage: available ? 'available' : 'unavailable',
+      source: available ? 'firestore' : 'local-fallback'
+    };
+  }
+
   public async isHealthy(): Promise<boolean> {
     if (this.firestore && this.firestoreAvailable) {
       try {
@@ -680,11 +677,11 @@ class Database {
         const snap = await settingsRef.get();
         if (snap.exists) return true;
       } catch (err: any) {
-        console.warn('[DB] Health check error (falling back to local store health):', err.message);
+        console.warn('[DB] Durable storage health check failed:', err.message);
         this.firestoreAvailable = false;
       }
     }
-    return this.initialized && this.localStore.portfolio.length > 0;
+    return false;
   }
 
   // ==================== AUTH & SESSION MANAGEMENT ====================

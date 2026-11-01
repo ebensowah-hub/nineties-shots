@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
-import { db } from './src/server/db';
+import { db, DurableStorageUnavailableError } from './src/server/db';
 import { AdminUser } from './src/types';
 import { uploadPortfolioImage, MAX_FILE_SIZE_BYTES, checkStorageStatus } from './src/server/storageService';
 import {
@@ -86,6 +86,22 @@ async function startServer() {
     next();
   });
 
+  // Mark every API JSON response with the storage source actually in use at send time.
+  app.use('/api', (req, res, next) => {
+    const originalJson = res.json.bind(res);
+    res.json = ((body: any) => {
+      const status = db.getStorageStatus();
+      res.setHeader('X-Data-Source', status.source);
+      if (status.durableStorage === 'unavailable') {
+        res.setHeader('X-Storage-Warning', 'Durable database unavailable; local fallback data may be stale and business writes are disabled.');
+      } else {
+        res.removeHeader('X-Storage-Warning');
+      }
+      return originalJson(body);
+    }) as typeof res.json;
+    next();
+  });
+
   // ==================== AUTH MIDDLEWARE ====================
   const requireAdminAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
     const authHeader = req.headers.authorization;
@@ -126,6 +142,10 @@ async function startServer() {
   };
 
   // ==================== PUBLIC API ENDPOINTS ====================
+  app.get('/api/storage-status', (req, res) => {
+    const status = db.getStorageStatus();
+    res.status(status.durableStorage === 'available' ? 200 : 503).json(status);
+  });
   // Production-grade health check that tests database readiness and static asset availability
   app.get('/api/health', async (req, res) => {
     try {
@@ -176,7 +196,7 @@ async function startServer() {
         socials: settings.socials
       });
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to retrieve public configuration' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve public configuration' });
     }
   });
 
@@ -186,7 +206,7 @@ async function startServer() {
       const items = await db.getPortfolio(false);
       res.json(items);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to load portfolio' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to load portfolio' });
     }
   });
 
@@ -196,7 +216,7 @@ async function startServer() {
       const services = await db.getServices(false);
       res.json(services);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to load services' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to load services' });
     }
   });
 
@@ -238,7 +258,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Error submitting inquiry:', err);
-      res.status(500).json({ error: 'Internal server error while processing inquiry.' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Internal server error while processing inquiry.' });
     }
   });
 
@@ -258,7 +278,7 @@ async function startServer() {
       });
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to record event' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to record event' });
     }
   });
 
@@ -337,7 +357,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Login error:', err);
-      res.status(500).json({ error: 'Internal server error during login' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Internal server error during login' });
     }
   });
 
@@ -371,7 +391,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Error revoking sessions:', err);
-      res.status(500).json({ error: 'Failed to revoke sessions' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to revoke sessions' });
     }
   });
 
@@ -411,11 +431,17 @@ async function startServer() {
         user: result.user
       });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update password' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update password' });
     }
   });
 
   // ==================== ADMIN PROTECTED CRUD ====================
+  // Durable database status for the authenticated admin dashboard.
+  app.get('/api/admin/storage-status', requireAdminAuth, (req: AuthenticatedRequest, res) => {
+    const status = db.getStorageStatus();
+    res.status(status.durableStorage === 'available' ? 200 : 503).json(status);
+  });
+
   // Dashboard Overview
   app.get('/api/admin/dashboard', requireAdminAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -437,7 +463,7 @@ async function startServer() {
         upcomingBookings
       });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to retrieve dashboard stats' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve dashboard stats' });
     }
   });
 
@@ -467,7 +493,7 @@ async function startServer() {
       }
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update inquiry' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update inquiry' });
     }
   });
 
@@ -510,7 +536,7 @@ async function startServer() {
 
       res.status(201).json({ success: true, booking });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to convert inquiry to booking' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to convert inquiry to booking' });
     }
   });
 
@@ -551,7 +577,7 @@ async function startServer() {
       const booking = await db.createBooking(payload, req.adminUser!.username);
       res.status(201).json(booking);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to create booking' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to create booking' });
     }
   });
 
@@ -604,7 +630,7 @@ async function startServer() {
       }
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update booking' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update booking' });
     }
   });
 
@@ -642,7 +668,7 @@ async function startServer() {
       }
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update client' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update client' });
     }
   });
 
@@ -657,7 +683,7 @@ async function startServer() {
       const item = await db.addPortfolioItem(req.body, req.adminUser!.username);
       res.status(200).json(item);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to add portfolio item' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to add portfolio item' });
     }
   });
 
@@ -670,7 +696,7 @@ async function startServer() {
       }
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update portfolio item' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update portfolio item' });
     }
   });
 
@@ -765,7 +791,7 @@ async function startServer() {
         const isStorageError = err.message?.includes('[PORTFOLIO UPLOAD ERROR]') || err.message?.includes('Cloud media storage unavailable');
         if (isStorageError) {
           console.error('[PORTFOLIO UPLOAD ERROR]', err.message);
-          res.status(500).json({ error: err.message });
+          res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: err.message });
           return;
         }
         console.warn('[PORTFOLIO UPLOAD FAILED]', err.message);
@@ -780,7 +806,7 @@ async function startServer() {
       const status = await checkStorageStatus();
       res.json(status);
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to retrieve storage status' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: err.message || 'Failed to retrieve storage status' });
     }
   });
 
@@ -795,7 +821,7 @@ async function startServer() {
       const srv = await db.addService(req.body, req.adminUser!.username);
       res.status(201).json(srv);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to add service' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to add service' });
     }
   });
 
@@ -808,7 +834,7 @@ async function startServer() {
       }
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update service' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update service' });
     }
   });
 
@@ -831,7 +857,7 @@ async function startServer() {
       const updated = await db.updateSettings(req.body, req.adminUser!.username);
       res.json(updated);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to update settings' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update settings' });
     }
   });
 
@@ -855,7 +881,7 @@ async function startServer() {
       res.json(overview);
     } catch (err) {
       console.error('Error fetching financial overview:', err);
-      res.status(500).json({ error: 'Failed to calculate financial overview' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to calculate financial overview' });
     }
   });
 
@@ -869,7 +895,7 @@ async function startServer() {
       res.json(analytics);
     } catch (err) {
       console.error('Error fetching financial analytics:', err);
-      res.status(500).json({ error: 'Failed to compute financial analytics' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to compute financial analytics' });
     }
   });
 
@@ -896,7 +922,7 @@ async function startServer() {
       res.json(transactions);
     } catch (err) {
       console.error('Error fetching financial transactions:', err);
-      res.status(500).json({ error: 'Failed to retrieve transaction ledger' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve transaction ledger' });
     }
   });
 
@@ -921,7 +947,7 @@ async function startServer() {
       res.json(expenses);
     } catch (err) {
       console.error('Error fetching expenses:', err);
-      res.status(500).json({ error: 'Failed to retrieve expenses' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve expenses' });
     }
   });
 
@@ -954,7 +980,7 @@ async function startServer() {
       res.status(201).json(expense);
     } catch (err) {
       console.error('Error creating expense:', err);
-      res.status(500).json({ error: 'Failed to create expense entry' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to create expense entry' });
     }
   });
 
@@ -997,7 +1023,7 @@ async function startServer() {
       res.json(updated);
     } catch (err) {
       console.error('Error updating expense:', err);
-      res.status(500).json({ error: 'Failed to update expense entry' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update expense entry' });
     }
   });
 
@@ -1011,7 +1037,7 @@ async function startServer() {
       res.json(updated);
     } catch (err) {
       console.error('Error updating expense:', err);
-      res.status(500).json({ error: 'Failed to update expense entry' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to update expense entry' });
     }
   });
 
@@ -1025,7 +1051,7 @@ async function startServer() {
       res.json({ success: true });
     } catch (err) {
       console.error('Error deleting expense:', err);
-      res.status(500).json({ error: 'Failed to delete expense entry' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to delete expense entry' });
     }
   });
 
@@ -1048,7 +1074,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Error fetching currency rates:', err);
-      res.status(500).json({ error: 'Failed to retrieve currency exchange rates.' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve currency exchange rates.' });
     }
   });
 
@@ -1152,7 +1178,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('Error converting currency:', err);
-      res.status(500).json({ error: 'Server error processing currency conversion.' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Server error processing currency conversion.' });
     }
   });
 
@@ -1162,7 +1188,7 @@ async function startServer() {
       const history = await db.getConversionHistory(50);
       res.json(history);
     } catch (err) {
-      res.status(500).json({ error: 'Failed to retrieve conversion history.' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to retrieve conversion history.' });
     }
   });
 
@@ -1172,7 +1198,7 @@ async function startServer() {
       await db.clearConversionHistory(req.adminUser!.username);
       res.json({ success: true, message: 'Conversion history cleared.' });
     } catch (err) {
-      res.status(500).json({ error: 'Failed to clear conversion history.' });
+      res.status(err instanceof DurableStorageUnavailableError || (err as any)?.code === 'STORAGE_UNAVAILABLE' ? 503 : 500).json({ error: 'Failed to clear conversion history.' });
     }
   });
 

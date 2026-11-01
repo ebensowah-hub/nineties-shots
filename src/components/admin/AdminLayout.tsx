@@ -67,6 +67,27 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
   const [refreshing, setRefreshing] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const [durableStorageUnavailable, setDurableStorageUnavailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const checkStorage = async () => {
+      try {
+        const response = await fetch('/api/storage-status', { cache: 'no-store' });
+        const status = await response.json();
+        if (active) setDurableStorageUnavailable(status.durableStorage !== 'available');
+      } catch {
+        if (active) setDurableStorageUnavailable(true);
+      }
+    };
+    checkStorage();
+    const interval = window.setInterval(checkStorage, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   // Core Data States
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
@@ -304,6 +325,15 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ user, onLogout, onView
             </button>
           </div>
         </header>
+
+        {durableStorageUnavailable && (
+          <div role="alert" className="border-b border-amber-900/70 bg-amber-950/40 px-6 py-3 text-amber-200">
+            <p className="text-xs font-mono uppercase tracking-wider">Database connection unavailable</p>
+            <p className="mt-1 text-xs text-amber-100/80">
+              Business changes are temporarily disabled. Do not rely on local fallback data as saved records. Retry after the database connection is restored.
+            </p>
+          </div>
+        )}
 
         {/* Content Views */}
         <div className="p-6 md:p-8 flex-1">

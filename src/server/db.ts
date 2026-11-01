@@ -661,6 +661,15 @@ class Database {
     this.initialized = true;
   }
 
+  public getStorageStatus(): { applicationInitialized: boolean; durableStorage: 'available' | 'unavailable'; source: 'firestore' | 'local-fallback' } {
+    const available = Boolean(this.firestore && this.firestoreAvailable);
+    return {
+      applicationInitialized: this.initialized,
+      durableStorage: available ? 'available' : 'unavailable',
+      source: available ? 'firestore' : 'local-fallback'
+    };
+  }
+
   public async isHealthy(): Promise<boolean> {
     if (this.firestore && this.firestoreAvailable) {
       try {
@@ -668,11 +677,11 @@ class Database {
         const snap = await settingsRef.get();
         if (snap.exists) return true;
       } catch (err: any) {
-        console.warn('[DB] Health check error (falling back to local store health):', err.message);
+        console.warn('[DB] Durable storage health check failed:', err.message);
         this.firestoreAvailable = false;
       }
     }
-    return this.initialized && this.localStore.portfolio.length > 0;
+    return false;
   }
 
   // ==================== AUTH & SESSION MANAGEMENT ====================

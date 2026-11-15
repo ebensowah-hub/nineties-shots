@@ -231,15 +231,22 @@ class Database {
   }
 
   private saveLocalStore(): void {
+    const filePath = this.getDbFilePath();
+    const dir = path.dirname(filePath);
+
     try {
-      const filePath = this.getDbFilePath();
-      const dir = path.dirname(filePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      fs.writeFileSync(filePath, JSON.stringify(this.localStore, null, 2), 'utf-8');
-    } catch (e: any) {
-      console.warn('[DB] Failed to save local store:', e.message);
+
+      // Write to a temporary file first so an interrupted write cannot leave
+      // the only local backup partially written.
+      const temporaryPath = `${filePath}.tmp`;
+      fs.writeFileSync(temporaryPath, JSON.stringify(this.localStore, null, 2), 'utf-8');
+      fs.renameSync(temporaryPath, filePath);
+    } catch (error: any) {
+      console.error('[DB] Local backup write failed:', error?.message || error);
+      throw new Error('LOCAL_BACKUP_WRITE_FAILED: Changes were not saved. Check the service local storage permissions and available disk space.');
     }
   }
 
